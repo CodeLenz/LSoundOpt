@@ -1,12 +1,3 @@
-#
-# TODO
-#
-# raio_filtro -> pensar em uma maneira de entrar com este dado
-
-
-#
-# FILTRAR AS RESTRIÇÕES È INCONSISTENTE
-#
 
 #
 # Rotina principal
@@ -133,13 +124,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
     println("Inicializando o vetor de variáveis de projeto")
     γ = zeros(ne)
 
-    #mascara_init = rand(elements_design,round(Int,0.5*length(elements_design)))
-    #γ[round(Int,1/3*nvp):round(Int,2/3*nvp)] .= 0
-    #γ[1:16] .= 1.0
-    #γ[33:64] .= 1.0
-    #γ[1] = 1.0
-
-
+    
     # Fixa os valores prescritos de densidade relativa
     Fix_γ!(γ,elements_fixed,values_fixed)
     
