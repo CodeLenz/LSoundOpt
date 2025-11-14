@@ -35,13 +35,13 @@ function Sweep(nn,ne,coord,connect,γ,fρ,fκ,freqs,livres,velocities,pressures:
         Kd = K  .- (ω^2)*M
 
         # Monta o vetor de forças, que depende da frequência  
-        Vetor_P!(0.0,velocities,coord,connect,P,ω=ω)
+        LSound.Vetor_P!(0.0,velocities,coord,connect,P,ω=ω)
 
         # Monta o vetor de forças devido às pressões impostas 
         # 
         # TODO VER A QUESTÃO DA FREQUÊNCIA
         #
-        F_P =  P_pressure(nn, Kd, pressures)
+        F_P =  LSound.P_pressure(nn, Kd, pressures)
 
         # A "força" total será a soma das duas parcelas
         P += F_P
@@ -51,7 +51,7 @@ function Sweep(nn,ne,coord,connect,γ,fρ,fκ,freqs,livres,velocities,pressures:
 
         # Precisamos registrar os valores das pressões impostas em U
         # TODO VER A QUESTÃO DA FREQUÊNCIA
-        Mask_ebc!(U,pressures)
+        LSound.Mask_ebc!(U,pressures)
 
         # Grava na matriz MP
         MP[:,contador] .= U

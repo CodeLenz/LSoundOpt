@@ -44,15 +44,15 @@ function Derivada_KM(et,γe,dfρ::Function,dfκ::Function,X::Array)
     # usando as derivadas das propriedades 
     # em relação à γe
     if et==3
-        Ke, Me = KMe_bi4(diρ,diκ,X)
+        Ke, Me = LSound.KMe_bi4(diρ,diκ,X)
     elseif et==2
-        Ke, Me = KMe_tri3(diρ,diκ,X)
+        Ke, Me = LSound.KMe_tri3(diρ,diκ,X)
     elseif et==4
-        Ke, Me = KMe_tet4(diρ,diκ,X)   
+        Ke, Me = LSound.KMe_tet4(diρ,diκ,X)   
     elseif et==5
-        Ke, Me = KMe_hex8(diρ,diκ,X)
+        Ke, Me = LSound.KMe_hex8(diρ,diκ,X)
     elseif et==7
-        Ke, Me = KMe_pyr5(diρ,diκ,X) 
+        Ke, Me = LSound.KMe_pyr5(diρ,diκ,X) 
     else
         error("Derivada_KM::Elemento não definido")
     end
@@ -142,7 +142,7 @@ function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
             etype = connect[ele,1]
 
             # Localizações 
-            nos, X = Nos_Coordenadas(ele,etype,coord,connect)
+            nos, X = LSound.Nos_Coordenadas(ele,etype,coord,connect)
   
             # Pressão nos nós do elementos
             pe = P[nos]

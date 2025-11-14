@@ -29,19 +29,19 @@ function Monta_KM_param(ne,coord,connect,γ::Vector,fρ::Function,fκ::Function)
         et = connect[ele,1]
 
         # Descobre nos, X e Y para este elemento
-        nos, X = Nos_Coordenadas(ele,et,coord,connect) 
+        nos, X = LSound.Nos_Coordenadas(ele,et,coord,connect) 
 
         # Monta as matrizes dos elementos
         if et==3
-           Ke, Me = KMe_bi4(iρ,iκ,X)
+           Ke, Me = LSound.KMe_bi4(iρ,iκ,X)
         elseif et==2
-           Ke, Me = KMe_tri3(iρ,iκ,X)
+           Ke, Me = LSound.KMe_tri3(iρ,iκ,X)
         elseif et==4
-            Ke, Me = KMe_tet4(iρ,iκ,X)    
+            Ke, Me = LSound.KMe_tet4(iρ,iκ,X)    
         elseif et==5
-           Ke, Me = KMe_hex8(iρ,iκ,X) 
+           Ke, Me = LSound.KMe_hex8(iρ,iκ,X) 
         elseif et==7
-            Ke, Me = KMe_pyr5(iρ,iκ,X)    
+            Ke, Me = LSound.KMe_pyr5(iρ,iκ,X)    
          else
             error("Elemento não definido")
         end

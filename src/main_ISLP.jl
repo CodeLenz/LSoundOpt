@@ -80,7 +80,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
     isfile(arquivo_yaml) || error("Otim:: arquivo de entrada $(arquivo_yaml) não existe")
 
     # Le dados da malha
-    nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed, centroides = Parsemsh_Daniele(mshfile)
+    nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed, centroides = LSound.Parsemsh_Daniele(mshfile)
 
     # Lista com os elementos que são de projeto
     elements_design = setdiff(1:ne,sort!(elements_fixed))

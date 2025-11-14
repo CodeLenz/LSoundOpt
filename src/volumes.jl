@@ -24,19 +24,19 @@ function Volumes(ne,connect,coord)
         et = connect[ele,1]
 
         # Descobre nos, X e Y para este elemento
-        nos, X = Nos_Coordenadas(ele,et,coord,connect) 
+        nos, X = LSound.Nos_Coordenadas(ele,et,coord,connect) 
 
         # Calcula a área ou o volume de cada elemento
         if et==3
-            V[ele] = Area_bi4(X)
+            V[ele] = LSound.Area_bi4(X)
         elseif et==2
-            V[ele] = Area_tri3(X)
+            V[ele] = LSound.Area_tri3(X)
         elseif et==4
-            V[ele] = Volume_tet4(X)
+            V[ele] = LSound.Volume_tet4(X)
         elseif et==5
-            V[ele] = Volume_hex8(X)
+            V[ele] = LSound.Volume_hex8(X)
         elseif et==7
-            V[ele] = Volume_pyr5(X)    
+            V[ele] = LSound.Volume_pyr5(X)    
         else
             error("Volumes::Elemento não definido")
         end

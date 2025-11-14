@@ -3,6 +3,10 @@ module LSoundOpt
    # Carrega o LSound
    using LSound
 
+   # Algebra linear e matrizes esparsas
+   using LinearAlgebra
+   using SparseArrays
+
    # Carrega os pacotes para leitura de dados
    using YAML
    using Lgmsh
@@ -68,5 +72,8 @@ module LSoundOpt
    # Arquivo principal 
    include("main_ISLP.jl")
 
+
+   # Exporta a rotina principal 
+   export Otim_ISLP
 
 end

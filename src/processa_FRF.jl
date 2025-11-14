@@ -39,7 +39,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     isfile(arquivo_yaml) || error("Otim:: arquivo de entrada $(arquivo_yaml) não existe")
 
     # Le dados da malha
-    nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed = Parsemsh_Daniele(meshfile)
+    nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed = LSound.Parsemsh_Daniele(meshfile)
     
     # Le os dados do arquivo yaml
     raio_filtro, niter, nhisto, ϵ1, ϵ2, vf, parametrizacao, γ_min, γ_max, partida= Le_YAML(arquivo_yaml)
@@ -49,19 +49,10 @@ function Processa_FRF(meshfile::String,freqs::Vector)
 
     # Seleciona as rotinas de parametrização de material de acordo com 
     # a opção 
-    if parametrizacao=="PEREIRA"
-      println("Utilizando a parametrização de PEREIRA")
-      fρ(γ)  = fρ_pereira(γ) #,ψ, ρ_ar = ρ_ar, ρ2 = ρ_solido)
-      dfρ(γ) = dfρ_pereira(γ)
-      fκ(γ)  = fκ_pereira(γ)
-      dfκ(γ) = dfκ_pereira(γ)
-    #elseif parametrizacao=="DUHRING"
-    #  println("Utilizando a parametrização de DUHRING")
-    #  fρ(γ)  = fρ_duhring(γ)
-    #  dfρ(γ) = dfρ_duhring(γ)
-    #  fκ(γ)  = fκ_duhring(γ)
-    #  dfκ(γ) = dfκ_duhring(γ)
-    end
+    fρ(γ)  = fρ_duhring(γ)
+    dfρ(γ) = dfρ_duhring(γ)
+    fκ(γ)  = fκ_duhring(γ)
+    dfκ(γ) = dfκ_duhring(γ)
      
     # Agora que queremos otimizar o SPL, vamos precisar OBRIGATÓRIAMENTE de nodes_target,
     # que vai funcionar como nodes_probe aqui
