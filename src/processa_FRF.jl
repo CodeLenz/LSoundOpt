@@ -42,7 +42,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed = LSound.Parsemsh_Daniele(meshfile)
     
     # Le os dados do arquivo yaml
-    raio_filtro, niter, nhisto, ϵ1, ϵ2, vf, parametrizacao, γ_min, γ_max, partida= Le_YAML(arquivo_yaml)
+    raio_filtro, niter, ϵ1, ϵ2,  vf, Past, fatorcv, μ = Le_YAML(arquivo_yaml)
 
     # Lista com os elementos que são de projeto
     elements_design = setdiff(1:ne,sort!(elements_fixed))
@@ -74,7 +74,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     livres = setdiff(collect(1:nn),nodes_mask)
    
     # Sweep na topologia inicial, para comparação com a otimizada
-    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,freqs,livres,velocities,pressures)
+    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
 
     # Número de frequências
     nf = length(freqs)
@@ -97,7 +97,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     γ_opt = vec(readdlm(arquivo_γ_fin))  
     
     # Roda o sweep na topologia otimizada e exporta para visualização 
-    MP,_ =  Sweep(nn,ne,coord,connect,γ_opt,fρ,fκ,freqs,livres,velocities,pressures)
+    MP,_ =  Sweep(nn,ne,coord,connect,γ_opt,fρ,fκ,μ,freqs,livres,velocities,pressures)
     
     # Calcula o SLPn em cada uma das frequências 
     for i=1:nf

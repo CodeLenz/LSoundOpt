@@ -6,14 +6,15 @@
 # fκ  ->  função que parametriza κ
 # ===================================================================================
 
-function Monta_KM_param(ne,coord,connect,γ::Vector,fρ::Function,fκ::Function)  
+function Monta_KMC_param(ne,coord,connect,γ::Vector,fρ::Function,fκ::Function,μ::Float64)  
     
     # Aloca vetores para a montagem eficiente 
-    # das matrizes esparsas
+    # das matrizes esparsas 
     I = Int64[]
     J = Int64[]
     VK = Float64[]
     VM = Float64[]
+    VC = Float64[]
  
     # Loop pelos elementos
     for ele=1:ne
@@ -24,6 +25,9 @@ function Monta_KM_param(ne,coord,connect,γ::Vector,fρ::Function,fκ::Function)
         # Calcula as inversas 
         iρ = fρ(γe)
         iκ = fκ(γe)
+
+        # Cte for damping 
+        cte = (4/3)*μ
 
         # Tipo de elemento
         et = connect[ele,1]
@@ -54,12 +58,13 @@ function Monta_KM_param(ne,coord,connect,γ::Vector,fρ::Function,fκ::Function)
                 push!(J,nos[j])
                 push!(VK,Ke[i,j])
                 push!(VM,Me[i,j])
+                push!(VC,cte*Ke[i,j])
             end
         end
 
     end
 
     # Retorna as matrizes globais
-    return sparse(I,J,VK), sparse(I,J,VM)
+    return sparse(I,J,VK), sparse(I,J,VM), sparse(I,J,VC)
 
 end

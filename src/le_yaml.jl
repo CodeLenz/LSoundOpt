@@ -19,6 +19,9 @@ function Le_YAML(arquivo::AbstractString,ver=1.0;verbose=false)
     # Fração de volume (restrição de volume)
     vf = 0.5
 
+    # Parâmetro μ para o amortecimento 
+    μ = 0.0
+
     # Perímetro limite (restrição de perímetro)
     perimetro = 0.0
 
@@ -43,6 +46,24 @@ function Le_YAML(arquivo::AbstractString,ver=1.0;verbose=false)
          
     end
      
+    # Recupera μ do amortecimento 
+    if haskey(dados,"μ")
+
+        # recupera como string
+        string_μ = dados["μ"]
+
+        # Se foi informado como string, convertemos
+        if isa(string_μ,String)
+           μ =  parse(Float64,string_μ)
+        else
+           μ = string_μ
+        end
+
+        # Testa consistência da informação 
+        μ<0 && throw("Le_YAML::μ deve ser >=0") 
+
+    end
+
     # Recupera raio do filtro
     if haskey(dados,"raio")
 
@@ -185,6 +206,6 @@ function Le_YAML(arquivo::AbstractString,ver=1.0;verbose=false)
     end
 
    # Retorna os dados 
-   return raio, niter, ϵ1, ϵ2,  vf, perimetro, fatorcv
+   return raio, niter, ϵ1, ϵ2,  vf, perimetro, fatorcv, μ
 
 end

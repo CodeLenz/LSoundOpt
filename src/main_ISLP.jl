@@ -89,7 +89,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
     nvp = length(elements_design)
 
     # Le os dados do arquivo yaml
-    raio_filtro, niter, ϵ1, ϵ2,  vf, Past, fatorcv = Le_YAML(arquivo_yaml)
+    raio_filtro, niter, ϵ1, ϵ2,  vf, Past, fatorcv, μ = Le_YAML(arquivo_yaml)
      
     # Agora que queremos otimizar o SPL, vamos precisar OBRIGATÓRIAMENTE de nodes_target,
     # que vai funcionar como nodes_probe aqui
@@ -145,7 +145,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
     Lgmsh_export_element_scalar(arquivo_pos,γ,"Iter 0")
    
     # Sweep na topologia inicial, para comparação com a otimizada
-    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,freqs,livres,velocities,pressures)
+    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures)
 
     # Exporta por frequência
     for i=1:nf
@@ -165,16 +165,16 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
       γ = rand(ne)
 
       # Derivada utilizando o procedimento analítico
-      MP,K,M =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,freqs,livres,velocities,pressures)
+      MP,K,M,C = Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures)
 
       # Calcula a derivada da função objetivo em relação ao vetor γ
-      dΦ = Derivada(ne,nn,γ,connect,coord,K,M,livres,freqs,pressures,dfρ,dfκ,nodes_target,MP,elements_design,vA) 
+      dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,dfρ,dfκ,μ, nodes_target,MP,elements_design,vA) 
 
       println("Verificando as derivadas utilizando diferenças finitas centrais...")
       println("O número efetivo de variáveis de projeto é ", length(elements_design))
 
       # Derivada numérica
-      dnum = Verifica_derivada(γ,nn,ne,coord,connect,fρ,fκ,freqs,livres,velocities,pressures,nodes_target,elements_design,vA)
+      dnum = Verifica_derivada(γ,nn,ne,coord,connect,fρ,fκ,μ,freqs,livres,velocities,pressures,nodes_target,elements_design,vA)
 
       # Relativo, evitando divisão por zero
       rel = (dΦ.-dnum)./(dnum.+1E-12)
@@ -249,7 +249,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
 
         # Faz o sweep. A matriz MP tem dimensão nn × nf, ou seja, 
         # cada coluna é o vetor P para uma frequência de excitação
-        MP,K,M =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,freqs,livres,velocities,pressures)
+        MP,K,M,C =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
 
         # Calcula o SPL para esta iteração 
         objetivo = Objetivo(MP,nodes_target,vA)
@@ -284,7 +284,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
 
         # Calcula a derivada da função objetivo em relação ao vetor γ
         # somente nas posições de projeto
-        dΦ = Derivada(ne,nn,γ,connect,coord,K,M,livres,freqs,pressures,dfρ,dfκ,nodes_target,MP,elements_design,vA) 
+        dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,dfρ,dfκ,μ,nodes_target,MP,elements_design,vA) 
   
         # Visualiza as ESEDS...
         Lgmsh_export_element_scalar(arquivo_pos,dΦ,"dΦ")  
@@ -330,15 +330,10 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
             # Derivada do perímetro
             dP = dPerimiter(ne, γ, neighedge, elements_design)
              
-            # Filtra a derivada do perímetro
-            #dPf =  Filtro(vizinhos,pesos,dP,elements_design)
-
             # Visualiza a derivada do perímetro
-            #Lgmsh_export_element_scalar(arquivo_pos,dPf,"dPf")  
             Lgmsh_export_element_scalar(arquivo_pos,dP,"dP")  
 
             # Adiciona a linha em A
-            #A = vcat(A,transpose(dPf[elements_design]))
             A = vcat(A,transpose(dP[elements_design]))
             
          end
@@ -412,7 +407,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
     println("Final da otimização, executando a análise SWEEP na topologia otimizada")
 
    # Roda o sweep na topologia otimizada e exporta para visualização 
-   MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,freqs,livres,velocities,pressures)
+   MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
 
    # Exporta por frequência
    for i=1:nf

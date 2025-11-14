@@ -33,7 +33,7 @@ end
 # dfκ ->  função que parametriza a derivada do módulo de compressibilidade
 # X   ->  matriz com as coordenadas do elemento 
 #
-function Derivada_KM(et,γe,dfρ::Function,dfκ::Function,X::Array)
+function Derivada_KMC(et,γe,dfρ::Function,dfκ::Function,μ, X::Array)
 
     # Calcular as derivadas da inversa de ρ e da inversa
     # de κ em relação à γe
@@ -58,7 +58,7 @@ function Derivada_KM(et,γe,dfρ::Function,dfκ::Function,X::Array)
     end
 
     # Devolve as derivadas
-    return Ke, Me
+    return Ke, Me, (4/3)*μ*Ke
 
 end
 
@@ -68,9 +68,9 @@ end
 # Média simples do SPL em cada frequência
 #
 function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
-                  K::AbstractMatrix{T0},M::AbstractMatrix{T0},
+                  K::AbstractMatrix{T0},M::AbstractMatrix{T0},C::AbstractMatrix{T0},
                   livres::Vector{T1},freqs::Vector{T0},
-                  pressures::Vector, dfρ::Function, dfκ::Function,
+                  pressures::Vector, dfρ::Function, dfκ::Function,μ::T0,
                   nodes_target::Vector{T1},MP::Matrix{T2},
                   elements_design::Vector,A::Vector,p0=20E-6) where {T0,T1,T2}
 
@@ -102,7 +102,7 @@ function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
     Fn = similar(P)
 
     # Aloca antes do loop
-    Kd = similar(K[livres,livres])
+    #Kd = similar(K[livres,livres])
 
     # Loop pelas frequências
     coluna = 1
@@ -118,7 +118,7 @@ function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
         P .= MP[:,coluna]
 
         # Monta a matriz de rigidez dinâmica
-        Kd .= K[livres,livres]  .- (ωn^2)*M[livres,livres]
+        Kd = K[livres,livres]  .+im*ωn*C[livres,livres] .- (ωn^2)*M[livres,livres]
 
         # Monta o vetor adjunto para essa frequência
         Fn .= F_adj(nodes_target,P)
@@ -154,10 +154,10 @@ function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
             γe = γ[ele]
 
             # Calcula a derivada da rigidez dinâmica do elemento
-            dKe, dMe = Derivada_KM(etype,γe,dfρ,dfκ,X)
+            dKe, dMe, dCe = Derivada_KMC(etype,γe,dfρ,dfκ,μ,X)
 
             # Derivada da matriz dinâmica do elemento
-            dKde = dKe - dMe*ωn^2  
+            dKde = dKe .+im*ωn*dCe .- dMe*ωn^2  
 
             # Derivada de Fn [dFn/dγm]
             # dFp =  Derivada_forca_pressao(nos,pressures,dKde)

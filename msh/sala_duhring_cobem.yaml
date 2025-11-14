@@ -16,6 +16,11 @@ raio: 0.6
 ϵ1: 0.001
 ϵ2: 0.001
 
+# Parâmetro para o amortecimento 
+# 23C, 1atm
+#μ: 1.83E-5
+μ: 1E-3
+
 # Fator de atualização para air/solid
 fatorcv: 5E-3
 
