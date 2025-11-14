@@ -9,6 +9,9 @@ module LSoundOpt
    using Gmsh
    using DelimitedFiles
 
+   # ProgressMeter
+   using ProgressMeter
+
    # Pacotes de otimização
    using JuMP
    using Alpine
