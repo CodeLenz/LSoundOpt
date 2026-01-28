@@ -35,10 +35,46 @@ function DK(a::Int,b::Int)
 end
 
 
+#
+# Gradiente do perímetro (Optimized to O(N))
+#
+function dPerimiter(ne, γ, neighedge, elements_design)
+
+   # Vetor de derivadas
+   dP = zeros(ne)
+
+   # Loop over the positions of dP (apenas elementos de projeto)
+   for m in elements_design
+
+        # Vizinhos do elemento atual 'm'
+        vizinhos = neighedge[m]
+
+        # Densidade do elemento atual
+        γm = γ[m]
+
+        # Acumulador para a derivada do elemento m
+        sens_m = 0.0
+
+        # Loop apenas sobre os vizinhos diretos de 'm'
+        for viz in vizinhos
+            # A derivada analítica simplificada é 2 * (γ_m - γ_viz)
+            sens_m += 2.0 * (γm - γ[viz])
+        end #viz
+
+        # Salva o resultado
+        dP[m] = sens_m
+
+    end # m
+
+   # return the sensitivity
+   return dP
+
+end
 
 #
 # Gradiente do perímetro
 #
+#=
 function dPerimiter(ne, γ, neighedge, elements_design)
 
    # Vetor de derivadas
@@ -79,3 +115,4 @@ function dPerimiter(ne, γ, neighedge, elements_design)
    return dP
 
 end
+=#

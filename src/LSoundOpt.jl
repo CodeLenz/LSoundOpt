@@ -70,7 +70,7 @@ module LSoundOpt
    include("processa_FRF.jl")
 
    # Arquivo principal 
-   include("main_ISLP.jl")
+   include("main_ISLP_2.jl")
 
 
    # Exporta a rotina principal 

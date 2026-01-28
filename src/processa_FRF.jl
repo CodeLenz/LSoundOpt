@@ -23,8 +23,8 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     arquivo_yaml = meshfile[1:end-3]*"yaml"
 
     # Arquivos que contém as distribuições inicial/otimizada de γ
-    arquivo_γ_ini = meshfile[1:end-3]*"_γ_ini.dat"
-    arquivo_γ_fin = meshfile[1:end-3]*"_γ_opt.dat"
+    arquivo_γ_ini = meshfile[1:end-4]*"_γ_ini.dat"
+    arquivo_γ_fin = meshfile[1:end-4]*"_γ_opt.dat"
 
     # Verificamos se existem frequências sendo informadas
     isempty(freqs) && error("Analise Harmonica:: freqs deve ser um vetor não vazio")
@@ -49,10 +49,10 @@ function Processa_FRF(meshfile::String,freqs::Vector)
 
     # Seleciona as rotinas de parametrização de material de acordo com 
     # a opção 
-    fρ(γ)  = fρ_duhring(γ)
-    dfρ(γ) = dfρ_duhring(γ)
-    fκ(γ)  = fκ_duhring(γ)
-    dfκ(γ) = dfκ_duhring(γ)
+    #fρ(γ)  = fρ_duhring(γ)
+    #dfρ(γ) = dfρ_duhring(γ)
+    #fκ(γ)  = fκ_duhring(γ)
+    #dfκ(γ) = dfκ_duhring(γ)
      
     # Agora que queremos otimizar o SPL, vamos precisar OBRIGATÓRIAMENTE de nodes_target,
     # que vai funcionar como nodes_probe aqui

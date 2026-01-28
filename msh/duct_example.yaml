@@ -6,10 +6,10 @@
 versao: 1.0
 
 # Fração de volume (obrigatório)
-volfrac: 0.9
+volfrac: 0.30
 
 # Raio do filtro (obrigatório)
-raio: 0.6
+raio: 0.020
 
 # Parâmetros de ajuste das restrições 
 # linearizadas
@@ -21,7 +21,7 @@ raio: 0.6
 μ: 1.83E-5
 
 # Fator de atualização para air/solid
-fatorcv: 5E-3
+fatorcv: 5E-2
 
 # Upper Perimiter constraint
 perimetro: 0.0

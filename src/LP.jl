@@ -27,8 +27,8 @@ function LP(c, A, b, γ)
          Alpine.Optimizer,
          "minlp_solver" => highs, #<- para binario. Aqui também dá para usar o cbc
          #"nlp_solver" => ipopt,  #<- para contínuo
-         "mip_solver" => gurobi,
-         #"mip_solver" => highs,
+         #"mip_solver" => gurobi,
+         "mip_solver" => highs,
       ),
    )
 
