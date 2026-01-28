@@ -9,7 +9,7 @@ versao: 1.0
 volfrac: 0.50
 
 # Raio do filtro (obrigatório)
-raio: 0.01
+raio: 0.02
 
 # Parâmetros de ajuste das restrições 
 # linearizadas --Não está sendo utilizado

@@ -113,8 +113,6 @@ Coherence;
 // 1. Materiais
 // Todo o domínio começa como Ar
 Physical Surface("Material,Ar,1,1.21,343.0,0.0") = {1, 2, 3, 4, 5, 6, 7};
-// As superfícies da cavidade podem virar Sólido
-Physical Surface("Material,Solido,2,2700.0,5000.0,0.0") = {5, 6, 7};
 
 // 2. Elementos Fixos (Não-projeto)
 // Superfícies 1, 2, 3 e 4 são o caminho do duto: Travadas como Ar
