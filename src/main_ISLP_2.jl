@@ -97,7 +97,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
        return dΦ, dnum, dP, dPnum 
     end
 
-    # --------------------------------------------------------------------------
+  # --------------------------------------------------------------------------
     # Loop Principal de Otimização
     # --------------------------------------------------------------------------
     V = Volumes(ne,connect,coord)
@@ -114,12 +114,16 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
     cv_warmup_cap = 0.05 
     
     cv_current = fatorcv 
+    
+    # [NEW] Global Stagnation Counter
+    stagnation_counter = 0
 
     for iter = 1:niter
+        
+        # Capture topology at start of iteration to check for changes later
+        γ_start = copy(γ)
 
-        # --- [NEW STRATEGY] STAGNATION RECOVERY ("SHAKE DOWN") ---
-        # If cv is too small (e.g., less than 2 elements), boost it back to 5%
-        # This allows the loop to recover even if the Trust Region gave up in the last step.
+        # --- STAGNATION RECOVERY ("SHAKE DOWN") ---
         if cv_current < (2.0 / nvp) 
             println("--- STAGNATION RECOVERY: cv too low ($(round(cv_current,digits=5))). Boosting to 5%.")
             cv_current = 0.05
@@ -134,6 +138,10 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
             end
         end
 
+        # ... [Calculations of Elements, Volume, FEM Sweep, Objective, Perimeter] ...
+        # (Copy your existing code for identification, analysis, printing here)
+        # ...
+        
         # Identificação de elementos Ar/Sólido
         elements_air = Int64[]
         elements_solid = Int64[]
@@ -197,16 +205,15 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
             Lgmsh_export_element_scalar(arquivo_pos,dP,"dP")  
             A = vcat(A,transpose(dP[elements_design]))
         end
-       
+
         # -----------------------------------------------------------------
         # TRUST REGION LOOP
         # -----------------------------------------------------------------
         step_accepted = false
         n_reject = 0
         
-        # REMOVED: flag_podrao variable
-
         while !step_accepted
+            # ... (Copy your existing Trust Region While Loop content here) ...
             
             A_temp = copy(A)
             b_temp = copy(b)
@@ -292,17 +299,31 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
                 end
             end
 
-            # [NO-FAIL LOGIC]
             if n_reject >= 10
                 println("Trust Region exausta (10 rejeições). Desistindo desta iteração.")
-                # We accept the status quo (null step) and break to the outer loop.
-                # The "Stagnation Recovery" at the top of the next iteration will reset cv.
                 step_accepted = true 
                 break
             end
         end # While Trust Region
 
         Lgmsh_export_element_scalar(arquivo_pos,γ,"Iter $iter")
+
+        # --- [NEW] HARD STOP CHECK ---
+        # Check if the topology changed compared to the start of the iteration
+        total_changes = sum(abs.(γ - γ_start))
+        
+        if total_changes == 0
+            stagnation_counter += 1
+            println("--- AVISO: Nenhuma alteração na topologia nesta iteração (Stagnation $stagnation_counter/3).")
+            
+            if stagnation_counter >= 3
+                println("--- HARD STOP: Otimização estagnada por 3 iterações consecutivas. Terminando.")
+                break
+            end
+        else
+            # Reset counter if we managed to move
+            stagnation_counter = 0
+        end
 
     end # Loop iter
 

@@ -24,7 +24,7 @@ raio: 0.02
 fatorcv: 1E-1
 
 # Upper Perimiter constraint
-perimetro: 120.0
+perimetro: 300.0
 
 # Número de iterações de otimização (valor padrão é 100)
 niter: 100
