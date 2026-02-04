@@ -1,10 +1,422 @@
+
+#
+# Rotina principal de Otimização Topológica (ISLP)
+#
+"""
+ Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
+ 
+ Entradas:
+ - arquivo: Caminho para o arquivo .geo ou .msh
+ - freqs: Vetor de frequências para análise (Recomendado step=1Hz para ressonadores)
+ - vA: Vetor de pesos para as frequências (geralmente ones(nf))
+"""
+function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
+
+   # ---------------------------------------------------------------------------
+   # 1. PREPARAÇÃO DA MALHA E ARQUIVOS
+   # ---------------------------------------------------------------------------
+   # Se o arquivo for um .geo, geramos um .msh utilizando a biblioteca do gmsh
+   if occursin(".geo",arquivo)
+      gmsh.initialize()
+      gmsh.open(arquivo)
+      gmsh.model.mesh.generate(2)
+      mshfile = replace(arquivo,".geo"=>".msh")
+      gmsh.write(mshfile)
+   else 
+      mshfile = arquivo
+   end
+
+    # Define os nomes dos arquivos de saída
+    arquivo_yaml = replace(mshfile,".msh"=>".yaml")
+    nomebase = basename(mshfile)
+    arquivo_pos       = replace(nomebase,".msh"=>".pos")
+    arquivo_pos_freq  = replace(nomebase,".msh"=>"_freq.pos")
+    arquivo_data_opt  = replace(nomebase,".msh"=>".data")
+
+    arquivo_γ_ini = replace(nomebase,".msh"=>"_γ_ini.dat")
+    arquivo_γ_fin = replace(nomebase,".msh"=>"_γ_opt.dat")
+
+    # Verificações de entrada básicas
+    isempty(freqs) && error("Analise Harmonica:: freqs deve ser um vetor não vazio")
+    isa(freqs,Vector{Float64}) || error("freqs deve ser um vetor de floats")
+    isfile(mshfile) || error("Otim:: arquivo de entrada $mshfile não existe")
+    nf = length(freqs)
+
+    if isempty(vA)
+       vA = ones(nf)
+    else 
+       length(vA)==nf || error("Otim:: dimensão de vA deve ser nf")
+    end
+
+    isfile(arquivo_yaml) || error("Otim:: arquivo de entrada $(arquivo_yaml) não existe")
+
+    # Leitura da malha e parâmetros do YAML
+    nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed, centroides = LSound.Parsemsh_Daniele(mshfile)
+    elements_design = setdiff(1:ne,sort!(elements_fixed))
+    nvp = length(elements_design) 
+
+    raio_filtro, niter, ϵ1, ϵ2,  vf, Past, fatorcv, μ = Le_YAML(arquivo_yaml)
+     
+    isempty(nodes_target) && error("Otim:: nodes_target deve ter ao menos um nó informado")
+    sort!(nodes_target)
+    isempty(materials) && error("Analise:: at least one material is necessary")
+
+    # Vizinhos de aresta, para cálculo do Perímetro
+    neighedge = NeighborEdges(ne,connect,elements_design)
+        
+    # ---------------------------------------------------------------------------
+    # 2. INICIALIZAÇÃO
+    # ---------------------------------------------------------------------------
+    println("Inicializando o vetor de variáveis de projeto com AR (Zeros).")
+    γ = zeros(ne)
+    Fix_γ!(γ,elements_fixed,values_fixed)
+    writedlm(arquivo_γ_ini,γ)
+
+    nodes_mask = sort(vcat(nodes_open,nodes_pressure))
+    livres = setdiff(collect(1:nn),nodes_mask)
+   
+    # Inicializa os arquivos de visualização do gmsh (.pos)
+    etype = connect[:,1]
+    Lgmsh_export_init(arquivo_pos,nn,ne,coord,etype,connect[:,3:end])
+    Lgmsh_export_init(arquivo_pos_freq,nn,ne,coord,etype,connect[:,3:end])
+    Lgmsh_export_element_scalar(arquivo_pos,γ,"Iter 0")
+   
+    # Sweep Inicial (Análise Acústica da configuração inicial)
+    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures)
+    for i=1:nf
+      f = freqs[i]
+      Lgmsh_export_nodal_scalar(arquivo_pos_freq,abs.(MP[:,i]),"Pressure in $f Hz [abs] - initial topology")
+    end
+
+    # Rotina de verificação de derivada (debug)
+    if verifica_derivada
+       println("--- Modo de Verificação de Derivada ---")
+       γ = rand(ne) # Perturbação aleatória
+       MP,K,M,C = Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures)
+       dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ, fκ,dfρ,dfκ,μ, nodes_target,MP,elements_design,vA) 
+       dnum = Verifica_derivada(γ,nn,ne,coord,connect,fρ,fκ,μ,freqs,livres,velocities,pressures,nodes_target,elements_design,vA)
+       rel = (dΦ.-dnum)./(dnum.+1E-12)
+       Lgmsh_export_element_scalar(arquivo_pos,γ,"γ_debug")
+       Lgmsh_export_element_scalar(arquivo_pos,dΦ,"Analitica")
+       Lgmsh_export_element_scalar(arquivo_pos,dnum,"Numerica")
+       Lgmsh_export_element_scalar(arquivo_pos,rel,"relativa")
+       
+       # Verificação derivada perímetro
+       FPerimiter(γ) =  Perimiter(γ, neighedge, elements_design)
+       dPnum = df(γ,FPerimiter,elements_design)
+       dP = dPerimiter(ne, γ, neighedge, elements_design)
+       return dΦ, dnum, dP, dPnum 
+    end
+
+    # --------------------------------------------------------------------------
+    # 3. LOOP PRINCIPAL DE OTIMIZAÇÃO
+    # --------------------------------------------------------------------------
+    V = Volumes(ne,connect,coord)
+    volume_full_projeto = sum(V[elements_design])
+    Vast = vf*volume_full_projeto
+
+    historico_V   = Float64[] 
+    historico_SLP = Float64[] 
+    historico_P   = Float64[] 
+
+    # --- SETUP DOS PARÂMETROS DE CONTROLE ---
+    cv_min = 1.0001 / nvp  # Move limit mínimo (pelo menos 1 elemento)
+    n_warmup = 5 
+    cv_warmup_cap = 0.05 
+    
+    cv_current = fatorcv 
+    
+    # Contador de Estagnação Global (Progressive Shake Down)
+    stagnation_counter = 0
+
+    for iter = 1:niter
+        
+        # Captura topologia no início para verificar mudanças depois
+        γ_start = copy(γ)
+
+        # --- LÓGICA DO PROGRESSIVE SHAKE DOWN ---
+        if stagnation_counter > 0
+            if stagnation_counter == 1
+                println("--- STAGNATION RECOVERY (Nível 1): Resetando cv para 5%.")
+                cv_current = 0.05
+            elseif stagnation_counter == 2
+                println("--- STAGNATION RECOVERY (Nível 2): Aumentando a aposta. cv = 15%.")
+                cv_current = 0.15
+            elseif stagnation_counter >= 3
+                println("--- STAGNATION RECOVERY (Nível 3): O Martelo. cv = 30%.")
+                cv_current = 0.30
+            end
+        
+        # Recuperação Preventiva (se cv ficou muito pequeno sem estagnação)
+        elseif cv_current < (2.0 / nvp) 
+            println("--- RECUPERAÇÃO PREVENTIVA: cv muito baixo ($(round(cv_current,digits=5))). Resetando para 5%.")
+            cv_current = 0.05
+        end
+
+        # --- WARM-UP LOGIC ---
+        # Só aplicamos o teto do warm-up se NÃO estivermos tentando desestagnar.
+        is_warmup = iter <= n_warmup
+        if is_warmup && stagnation_counter == 0
+            if cv_current > cv_warmup_cap
+                cv_current = cv_warmup_cap
+                println("--- WARM-UP (Iter $iter): Clamping cv to $(cv_warmup_cap)")
+            end
+        end
+
+        # Identificação de elementos Ar/Sólido (para restrições lineares)
+        elements_air = Int64[]
+        elements_solid = Int64[]
+        one_air = Float64[]
+        one_solid = Float64[]
+
+        for ele in elements_design
+            if γ[ele]<0.5 
+               push!(elements_air,ele)
+               push!(one_air,1.0)
+               push!(one_solid,0)
+            else
+               push!(elements_solid,ele)
+               push!(one_air,0)
+               push!(one_solid,1.0)
+            end
+        end
+
+        volume_atual = sum(γ[elements_design].*V[elements_design])
+        push!(historico_V , volume_atual)
+
+        # --- ANÁLISE FEM ---
+        MP,K,M,C =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
+        objetivo = Objetivo(MP,nodes_target,vA)
+        push!(historico_SLP, objetivo)
+
+        perimetro = Perimiter(γ, neighedge, elements_design)
+        push!(historico_P, perimetro)
+        
+        # Exporta resultados parciais
+        for i=1:nf
+         f = freqs[i]
+         Lgmsh_export_nodal_scalar(arquivo_pos_freq,abs.(MP[:,i]),"Pressure in $f Hz [abs] $iter")
+        end
+
+        println("Iteração        ", iter)
+        println("Objetivo (SPL)  ", objetivo)
+        println("Perimetro       ", perimetro)
+        println("Past (Limit)    ", Past)
+        println("Volume atual    ", volume_atual)
+        println("Volume target   ", Vast)
+        println()
+
+        # --- SENSIBILIDADE ---
+        dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ,fκ,dfρ,dfκ,μ,nodes_target,MP,elements_design,vA) 
+        Lgmsh_export_element_scalar(arquivo_pos,dΦ,"dΦ")  
+
+        # Sensibilidade "crua" para o ILP
+        c = dΦ[elements_design] 
+
+        # --- RESTRIÇÕES LINEARES ---
+        # 1. Volume
+        ΔV = Vast - volume_atual
+        b = [ΔV]
+        println("Volume linearizado   ", b[1])
+        A = vcat(V[elements_design]')
+
+        # 2. Perímetro (se ativo)
+        if  perimetro > 0 && Past>0
+            ΔP = Past - perimetro
+            b = vcat(b, ΔP)
+            println("Perimetro linearizado   ", ΔP)
+            dP = dPerimiter(ne, γ, neighedge, elements_design)
+            Lgmsh_export_element_scalar(arquivo_pos,dP,"dP")  
+            A = vcat(A,transpose(dP[elements_design]))
+        end
+
+        # -----------------------------------------------------------------
+        # 4. TRUST REGION LOOP (ADAPTATIVO)
+        # -----------------------------------------------------------------
+        step_accepted = false
+        n_reject = 0
+        
+        # Armazena a última solução rejeitada para evitar deadlock discreto
+        last_rejected_dgamma = Float64[]
+        
+        while !step_accepted
+            
+            A_temp = copy(A)
+            b_temp = copy(b)
+
+            # --- Definição dos Limites de Movimento (Move Limits) ---
+            if !isempty(elements_air)
+                raw_limit = cv_current * length(elements_design)
+                g_air = ceil(Int, raw_limit)
+                
+                # [MITIGAÇÃO DE ASSIMETRIA: ORÇAMENTO PAR]
+                if isodd(g_air); g_air -= 1; end
+                g_air = max(0, g_air)
+
+                b_temp = vcat(b_temp, g_air)
+                A_temp = vcat(A_temp, transpose(one_air))
+            end
+
+            if !isempty(elements_solid)
+                raw_limit = cv_current * length(elements_design)
+                g_solid = ceil(Int, raw_limit) 
+
+                # [MITIGAÇÃO DE ASSIMETRIA: ORÇAMENTO PAR]
+                if isodd(g_solid); g_solid -= 1; end
+                g_solid = max(0, g_solid)
+
+                b_temp = vcat(b_temp, g_solid)
+                A_temp = vcat(A_temp, -transpose(one_solid))
+            end
+
+            # --- RESOLVE ILP (Integer Linear Programming) ---
+            Δγ = LP(c, A_temp, b_temp, γ[elements_design])
+
+            # [CHECK DE DEADLOCK]
+            # Se a nova solução é idêntica à rejeitada anteriormente, o loop está travado.
+            if !isempty(last_rejected_dgamma) && (Δγ == last_rejected_dgamma)
+                println("    -> AVISO: ILP gerou passo idêntico ao rejeitado anteriormente.")
+                println("    -> Redução de cv não alterou o conjunto viável inteiro. Abortando Trust Region.")
+                # Sai do While, aceita o passo anterior (que é nulo se travou de primeira) e força próxima iter
+                step_accepted = true 
+                break 
+            end
+
+            # Predição Linear
+            pred_reduction = -sum(c .* Δγ)
+
+            # Verifica se houve mudança
+            elements_changed = sum(abs.(Δγ))
+            
+            if elements_changed == 0
+                 println("Aviso: ILP retornou passo nulo. Aceitando para próxima iter.")
+                 step_accepted = true
+                 break
+            elseif abs(pred_reduction) < 1e-12 
+                 println("Aviso: Redução predita desprezível. Aceitando.")
+                 step_accepted = true
+                 break 
+            end
+
+            # --- TRIAL STEP ---
+            γ_trial = copy(γ)
+            γ_trial[elements_design] .+= Δγ
+            for ele in elements_design
+                γ_trial[ele] = round(γ_trial[ele]) # Garante 0 ou 1
+            end
+
+            # --- GEOMETRIC FEASIBILITY CHECK (PERÍMETRO REAL) ---
+            P_trial = Perimiter(γ_trial, neighedge, elements_design)
+            geom_violation = (Past > 0) && (P_trial > (Past + 1e-4))
+
+            if geom_violation
+                println("    -> Passo REJEITADO (Geometria). P_real ($P_trial) > Past ($Past). Reduzindo cv.")
+                last_rejected_dgamma = copy(Δγ) # Memoriza a falha
+                cv_current = max(cv_min, cv_current * 0.5)
+                n_reject += 1
+            else
+                # --- PHYSICAL FEASIBILITY CHECK (SPL REAL) ---
+                MP_trial, _, _, _ = Sweep(nn,ne,coord,connect,γ_trial,fρ,fκ,μ,freqs,livres,velocities,pressures)
+                obj_trial = Objetivo(MP_trial,nodes_target,vA)
+
+                actual_reduction = objetivo - obj_trial
+                
+                if abs(pred_reduction) < 1e-10
+                    R = 0.0
+                else
+                    R = actual_reduction / pred_reduction
+                end
+
+                println("--- Trust Region Eval: Pred = $(round(pred_reduction, digits=4)), Act = $(round(actual_reduction, digits=4)), R = $(round(R, digits=2)), cv = $(round(cv_current, digits=4))")
+
+                if R < 0.0 
+                    println("    -> Passo REJEITADO (Física). SPL piorou.")
+                    last_rejected_dgamma = copy(Δγ) # Memoriza a falha
+                    cv_current = max(cv_min, cv_current * 0.5) 
+                    n_reject +=1
+                else
+                    # --- PASSO ACEITO ---
+                    step_accepted = true
+                    γ .= γ_trial 
+
+                    if R > 0.7 
+                        if is_warmup
+                             println("    -> Passo ACEITO. Excelente.")
+                        else
+                             println("    -> Passo ACEITO. Excelente, expandindo cv.")
+                             cv_current = min(0.5, cv_current * 1.2)
+                        end
+                    elseif R > 0.3
+                        println("    -> Passo ACEITO. Boa, mantendo cv.")
+                    else
+                        println("    -> Passo ACEITO. Pobre, reduzindo cv.")
+                        cv_current = max(cv_min, cv_current * 0.5)
+                    end
+                end
+            end
+
+            if n_reject >= 10
+                println("Trust Region exausta (10 rejeições). Desistindo desta iteração.")
+                step_accepted = true 
+                break
+            end
+        end # Fim While Trust Region
+
+        # Exporta topologia da iteração
+        Lgmsh_export_element_scalar(arquivo_pos,γ,"Iter $iter")
+
+        # --- VERIFICAÇÃO DE ESTAGNAÇÃO GLOBAL ---
+        total_changes = sum(abs.(γ - γ_start))
+        
+        if total_changes == 0
+            stagnation_counter += 1
+            println("--- AVISO: Nenhuma alteração na topologia nesta iteração (Stagnation $stagnation_counter/4).")
+            
+            if stagnation_counter >= 4
+                println("--- HARD STOP: Otimização estagnada mesmo após 'Kick' de 30%. Terminando.")
+                break
+            end
+        else
+            # Se mudou, reseta o contador
+            stagnation_counter = 0
+        end
+
+    end # Fim Loop iter
+
+    # --------------------------------------------------------------------------
+    # 5. FINALIZAÇÃO
+    # --------------------------------------------------------------------------
+    println("Final da otimização, executando a análise SWEEP na topologia otimizada")
+    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
+    for i=1:nf
+      f = freqs[i]
+      Lgmsh_export_nodal_scalar(arquivo_pos_freq,abs.(MP[:,i]),"Pressure in $f Hz [abs]")
+    end
+    writedlm(arquivo_γ_fin,γ)
+    
+    fd = open(arquivo_data_opt,"w")
+    println(fd,"Historico V")
+    println(fd,historico_V)
+    println(fd,"Historico SPL")
+    println(fd,historico_SLP)
+    println(fd,"Historico P")
+    println(fd,historico_P)
+    close(fd)
+    
+
+    return historico_V, historico_SLP, historico_P
+
+end # Otim_ISLP
+
+
+
 #
 # Rotina principal
 #
 """
  Otim(meshfile::String,freqs=[])
 """
-function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=false)
+function Otim_ISLP_MBMM(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=false)
 
    # Se o arquivo for um .geo, geramos um .msh utilizando a biblioteca do gmsh
    if occursin(".geo",arquivo)
@@ -51,11 +463,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
     sort!(nodes_target)
     isempty(materials) && error("Analise:: at least one material is necessary")
 
-    # Pré-processamento
-    if !verifica_derivada
-         println("Determinando a vizinhança para um raio de $(raio_filtro)")
-         vizinhos, pesos = Vizinhanca(ne,centroides,raio_filtro,elements_design)
-    end 
+    # Vizinhos de aresta, para cálculo do Perímetro
     neighedge = NeighborEdges(ne,connect,elements_design)
         
     # Inicialização
@@ -97,7 +505,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
        return dΦ, dnum, dP, dPnum 
     end
 
-  # --------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # Loop Principal de Otimização
     # --------------------------------------------------------------------------
     V = Volumes(ne,connect,coord)
@@ -123,25 +531,36 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
         # Capture topology at start of iteration to check for changes later
         γ_start = copy(γ)
 
-        # --- STAGNATION RECOVERY ("SHAKE DOWN") ---
-        if cv_current < (2.0 / nvp) 
-            println("--- STAGNATION RECOVERY: cv too low ($(round(cv_current,digits=5))). Boosting to 5%.")
+        # --- LÓGICA DO PROGRESSIVE SHAKE DOWN ---
+        if stagnation_counter > 0
+            if stagnation_counter == 1
+                println("--- STAGNATION RECOVERY (Nível 1): Resetando cv para 5%.")
+                cv_current = 0.05
+            elseif stagnation_counter == 2
+                println("--- STAGNATION RECOVERY (Nível 2): Aumentando a aposta. cv = 15%.")
+                cv_current = 0.15
+            elseif stagnation_counter >= 3
+                println("--- STAGNATION RECOVERY (Nível 3): O Martelo. cv = 30%.")
+                cv_current = 0.30
+            end
+        
+        # Recuperação Preventiva (se cv ficou muito pequeno sem estagnação)
+        elseif cv_current < (2.0 / nvp) 
+            println("--- RECUPERAÇÃO PREVENTIVA: cv muito baixo ($(round(cv_current,digits=5))). Resetando para 5%.")
             cv_current = 0.05
         end
 
         # --- WARM-UP LOGIC ---
         is_warmup = iter <= n_warmup
-        if is_warmup
+        # Só aplicamos o CAP do warm-up se NÃO estivermos tentando desestagnar.
+        # Se estivermos estagnados, o "Martelo" tem prioridade sobre o warm-up.
+        if is_warmup && stagnation_counter == 0
             if cv_current > cv_warmup_cap
                 cv_current = cv_warmup_cap
                 println("--- WARM-UP (Iter $iter): Clamping cv to $(cv_warmup_cap)")
             end
         end
 
-        # ... [Calculations of Elements, Volume, FEM Sweep, Objective, Perimeter] ...
-        # (Copy your existing code for identification, analysis, printing here)
-        # ...
-        
         # Identificação de elementos Ar/Sólido
         elements_air = Int64[]
         elements_solid = Int64[]
@@ -213,23 +632,45 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
         n_reject = 0
         
         while !step_accepted
-            # ... (Copy your existing Trust Region While Loop content here) ...
             
             A_temp = copy(A)
             b_temp = copy(b)
 
             if !isempty(elements_air)
-                g_air = ceil(cv_current * length(elements_design))
+                # Calcula limite baseado no cv
+                raw_limit = cv_current * length(elements_design)
+                g_air = ceil(Int, raw_limit) # Converte para Inteiro
+                
+                # --- [MITIGAÇÃO DE ASSIMETRIA: ORÇAMENTO PAR] ---
+                # Se o limite for ímpar, reduz em 1 para garantir paridade.
+                # Isso evita que o solver tenha que "escolher um lado" num empate.
+                if isodd(g_air)
+                    g_air -= 1
+                end
+                # Garante que não ficou negativo ou zero (se cv for muito pequeno)
+                # Se ficar zero, o passo será nulo e o Shake Down resolverá na próxima.
+                g_air = max(0, g_air)
+
                 b_temp = vcat(b_temp, g_air)
                 A_temp = vcat(A_temp, transpose(one_air))
             end
 
             if !isempty(elements_solid)
-                g_solid  = ceil(cv_current * length(elements_design)) 
+                raw_limit = cv_current * length(elements_design)
+                g_solid = ceil(Int, raw_limit)
+
+                # --- [MITIGAÇÃO DE ASSIMETRIA: ORÇAMENTO PAR] ---
+                if isodd(g_solid)
+                    g_solid -= 1
+                end
+                g_solid = max(0, g_solid)
+
                 b_temp = vcat(b_temp, g_solid)
                 A_temp = vcat(A_temp, -transpose(one_solid))
             end
 
+            # Solve ILP
+            # ... (o resto continua igual)
             # Solve ILP
             Δγ = LP(c, A_temp, b_temp, γ[elements_design])
 
@@ -308,16 +749,15 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
 
         Lgmsh_export_element_scalar(arquivo_pos,γ,"Iter $iter")
 
-        # --- [NEW] HARD STOP CHECK ---
-        # Check if the topology changed compared to the start of the iteration
+        # --- CHECK FOR GLOBAL STAGNATION ---
         total_changes = sum(abs.(γ - γ_start))
         
         if total_changes == 0
             stagnation_counter += 1
-            println("--- AVISO: Nenhuma alteração na topologia nesta iteração (Stagnation $stagnation_counter/3).")
+            println("--- AVISO: Nenhuma alteração na topologia nesta iteração (Stagnation $stagnation_counter/4).")
             
-            if stagnation_counter >= 3
-                println("--- HARD STOP: Otimização estagnada por 3 iterações consecutivas. Terminando.")
+            if stagnation_counter >= 4
+                println("--- HARD STOP: Otimização estagnada mesmo após 'Kick' de 30%. Terminando.")
                 break
             end
         else
@@ -337,6 +777,7 @@ function Otim_ISLP(arquivo::String,freqs::Vector, vA::Vector;verifica_derivada=f
     return historico_V, historico_SLP, historico_P
 
 end # main_otim
+
 
 #
 # Rotina principal

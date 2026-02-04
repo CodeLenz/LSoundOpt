@@ -27,7 +27,7 @@ function Monta_KMC_param(ne,coord,connect,γ::Vector,fρ::Function,fκ::Function
         iκ = fκ(γe)
 
         # Cte for damping 
-        cte = (4/3)*μ
+        cte = (4/3)*μ*iκ
 
         # Tipo de elemento
         et = connect[ele,1]

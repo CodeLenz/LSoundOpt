@@ -25,40 +25,52 @@ function F_adj(nodes_target::Vector{T1},P::Vector{T2}) where {T1,T2}
 end
 
 # ===================================================================================
-# Calcula a derivada da matriz de rigidez dinâmica
+# Calcula a derivada da matriz de rigidez dinâmica de  um elemento
 #
 # et  ->  tipo de elemento
 # γe  ->  variável de projeto do elemento
-# dfρ ->  função que parametriza a derivada da densidade 
-# dfκ ->  função que parametriza a derivada do módulo de compressibilidade
+# fρ ->  função que parametriza a (inversa da) densidade 
+# fκ ->  função que parametriza a  (inversa do) módulo de compressibilidade
+# dfρ ->  função que parametriza a derivada da (inversa da) densidade 
+# dfκ ->  função que parametriza a derivada da (inversa do)  módulo de compressibilidade
 # X   ->  matriz com as coordenadas do elemento 
 #
-function Derivada_KMC(et,γe,dfρ::Function,dfκ::Function,μ, X::Array)
+function Derivada_KMC(et,γe,fρ::Function,fκ::Function,dfρ::Function,dfκ::Function,μ,X::Array)
 
-    # Calcular as derivadas da inversa de ρ e da inversa
-    # de κ em relação à γe
-    diρ = dfρ(γe)
-    diκ = dfκ(γe)
 
-    # Monta as matrizes dos elementos
-    # usando as derivadas das propriedades 
-    # em relação à γe
+    # Monta as matrizes dos elementos sem parametrização 
+    # ou seja K^0 e M^0
     if et==3
-        Ke, Me = LSound.KMe_bi4(diρ,diκ,X)
+        Ke0, Me0 = LSound.KMe_bi4(1.0,1.0,X)
     elseif et==2
-        Ke, Me = LSound.KMe_tri3(diρ,diκ,X)
+        Ke0, Me0 = LSound.KMe_tri3(1.0,1.0,X)
     elseif et==4
-        Ke, Me = LSound.KMe_tet4(diρ,diκ,X)   
+        Ke0, Me0 = LSound.KMe_tet4(1.0,1.0,X)
     elseif et==5
-        Ke, Me = LSound.KMe_hex8(diρ,diκ,X)
+        Ke0, Me0 = LSound.KMe_hex8(1.0,1.0,X)
     elseif et==7
-        Ke, Me = LSound.KMe_pyr5(diρ,diκ,X) 
+        Ke0, Me0 = LSound.KMe_pyr5(1.0,1.0,X)
     else
         error("Derivada_KM::Elemento não definido")
     end
 
+    # Calcula a inversa de ρ e da inversa
+    # de κ 
+    iρ = fρ(γe)
+    iκ = fκ(γe)
+
+    # Calcula as derivadas da inversa de ρ e da inversa
+    # de κ em relação à γe
+    diρ = dfρ(γe)
+    diκ = dfκ(γe)
+
+    # Calcula as derivadas
+    dKe = diρ*Ke0
+    dMe = diκ*Me0
+    dCe = (4/3)*μ*(iρ*diκ + iκ*diρ)*Ke0
+
     # Devolve as derivadas
-    return Ke, Me, (4/3)*μ*Ke
+    return dKe, dMe, dCe
 
 end
 
@@ -70,16 +82,13 @@ end
 function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
                   K::AbstractMatrix{T0},M::AbstractMatrix{T0},C::AbstractMatrix{T0},
                   livres::Vector{T1},freqs::Vector{T0},
-                  pressures::Vector, dfρ::Function, dfκ::Function,μ::T0,
+                  pressures::Vector, 
+                  fρ::Function, fκ::Function,
+                  dfρ::Function, dfκ::Function,μ::T0,
                   nodes_target::Vector{T1},MP::Matrix{T2},
                   elements_design::Vector,A::Vector,p0=20E-6) where {T0,T1,T2}
 
 
-    #
-    # TESTE 
-    #       
-    #γ[γ.==0]    .= 1E-3   
-    
     # Define o vetor de derivadas
     d = zeros(ne)
 
@@ -100,9 +109,6 @@ function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
 
     # Aloca Fn 
     Fn = similar(P)
-
-    # Aloca antes do loop
-    #Kd = similar(K[livres,livres])
 
     # Loop pelas frequências
     coluna = 1
@@ -154,7 +160,7 @@ function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
             γe = γ[ele]
 
             # Calcula a derivada da rigidez dinâmica do elemento
-            dKe, dMe, dCe = Derivada_KMC(etype,γe,dfρ,dfκ,μ,X)
+            dKe, dMe, dCe = Derivada_KMC(etype,γe,fρ,fκ,dfρ,dfκ,μ,X)
 
             # Derivada da matriz dinâmica do elemento
             dKde = dKe .+im*ωn*dCe .- dMe*ωn^2  
