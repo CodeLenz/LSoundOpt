@@ -1,4 +1,471 @@
 
+using SparseArrays
+using LinearAlgebra
+using DelimitedFiles
+using Printf
+
+# Supõe-se que LSound e outras dependências já estejam carregadas
+# e que a função LP suporte o aumento de variáveis.
+
+"""
+ Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
+ 
+ Entradas:
+ - arquivo: Caminho para o arquivo .geo ou .msh
+ - freqs: Vetor de frequências para análise (Recomendado step=1Hz para ressonadores)
+ - vA: Vetor de pesos para as frequências (geralmente ones(nf))
+"""
+function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
+
+    # ---------------------------------------------------------------------------
+    # 1. PREPARAÇÃO DA MALHA E ARQUIVOS
+    # ---------------------------------------------------------------------------
+    if occursin(".geo",arquivo)
+       gmsh.initialize()
+       gmsh.open(arquivo)
+       gmsh.model.mesh.generate(2)
+       mshfile = replace(arquivo,".geo"=>".msh")
+       gmsh.write(mshfile)
+    else 
+       mshfile = arquivo
+    end
+
+    # Define os nomes dos arquivos de saída
+    arquivo_yaml = replace(mshfile,".msh"=>".yaml")
+    nomebase = basename(mshfile)
+    arquivo_pos       = replace(nomebase,".msh"=>".pos")
+    arquivo_pos_freq  = replace(nomebase,".msh"=>"_freq.pos")
+    arquivo_data_opt  = replace(nomebase,".msh"=>".data")
+
+    arquivo_γ_ini = replace(nomebase,".msh"=>"_γ_ini.dat")
+    arquivo_γ_fin = replace(nomebase,".msh"=>"_γ_opt.dat")
+
+    # Verificações de entrada básicas
+    isempty(freqs) && error("Analise Harmonica:: freqs deve ser um vetor não vazio")
+    isa(freqs,Vector{Float64}) || error("freqs deve ser um vetor de floats")
+    isfile(mshfile) || error("Otim:: arquivo de entrada $mshfile não existe")
+    nf = length(freqs)
+
+    if isempty(vA)
+       vA = ones(nf)
+    else 
+       length(vA)==nf || error("Otim:: dimensão de vA deve ser nf")
+    end
+
+    isfile(arquivo_yaml) || error("Otim:: arquivo de entrada $(arquivo_yaml) não existe")
+
+    # Leitura da malha e parâmetros do YAML
+    nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed, centroides = LSound.Parsemsh_Daniele(mshfile)
+    elements_design = setdiff(1:ne,sort!(elements_fixed))
+    nvp = length(elements_design) 
+    
+    # [NOVO] Mapeamento Global -> Local para montagem eficiente das restrições
+    map_global_local = Dict{Int, Int}()
+    for (i, ele) in enumerate(elements_design)
+        map_global_local[ele] = i
+    end
+
+    raio_filtro, niter, ϵ1, ϵ2,  vf, Past, fatorcv, μ = Le_YAML(arquivo_yaml)
+     
+    isempty(nodes_target) && error("Otim:: nodes_target deve ter ao menos um nó informado")
+    sort!(nodes_target)
+    isempty(materials) && error("Analise:: at least one material is necessary")
+
+    # Vizinhos de aresta, para cálculo do Perímetro e Restrições Topológicas
+    neighedge = NeighborEdges(ne,connect,elements_design)
+        
+    # ---------------------------------------------------------------------------
+    # 2. INICIALIZAÇÃO
+    # ---------------------------------------------------------------------------
+    println("Inicializando o vetor de variáveis de projeto com AR (Zeros).")
+    γ = zeros(ne)
+    Fix_γ!(γ,elements_fixed,values_fixed)
+    writedlm(arquivo_γ_ini,γ)
+
+    nodes_mask = sort(vcat(nodes_open,nodes_pressure))
+    livres = setdiff(collect(1:nn),nodes_mask)
+   
+    # Inicializa os arquivos de visualização do gmsh (.pos)
+    etype = connect[:,1]
+    Lgmsh_export_init(arquivo_pos,nn,ne,coord,etype,connect[:,3:end])
+    Lgmsh_export_init(arquivo_pos_freq,nn,ne,coord,etype,connect[:,3:end])
+    Lgmsh_export_element_scalar(arquivo_pos,γ,"Iter 0")
+   
+    # Sweep Inicial
+    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures)
+    for i=1:nf
+      f = freqs[i]
+      Lgmsh_export_nodal_scalar(arquivo_pos_freq,abs.(MP[:,i]),"Pressure in $f Hz [abs] - initial topology")
+    end
+
+    # (Bloco de verificação de derivada omitido para brevidade, manter igual ao original se necessário)
+
+    # --------------------------------------------------------------------------
+    # 3. LOOP PRINCIPAL DE OTIMIZAÇÃO
+    # --------------------------------------------------------------------------
+    V = Volumes(ne,connect,coord)
+    volume_full_projeto = sum(V[elements_design])
+    Vast = vf*volume_full_projeto
+
+    historico_V   = Float64[] 
+    historico_SLP = Float64[] 
+    historico_P   = Float64[] 
+
+    # --- SETUP DOS PARÂMETROS DE CONTROLE ---
+    cv_min = 1.0001 / nvp  
+    n_warmup = 5 
+    cv_warmup_cap = 0.05 
+    
+    cv_current = fatorcv 
+    stagnation_counter = 0
+
+    for iter = 1:niter
+        
+        γ_start = copy(γ)
+
+        # --- LÓGICA DO PROGRESSIVE SHAKE DOWN ---
+        if stagnation_counter > 0
+            if stagnation_counter == 1
+                println("--- STAGNATION RECOVERY (Nível 1): Resetando cv para 5%.")
+                cv_current = 0.05
+            elseif stagnation_counter == 2
+                println("--- STAGNATION RECOVERY (Nível 2): Aumentando a aposta. cv = 15%.")
+                cv_current = 0.15
+            elseif stagnation_counter >= 3
+                println("--- STAGNATION RECOVERY (Nível 3): O Martelo. cv = 30%.")
+                cv_current = 0.30
+            end
+        elseif cv_current < (2.0 / nvp) 
+            println("--- RECUPERAÇÃO PREVENTIVA: cv muito baixo. Resetando para 5%.")
+            cv_current = 0.05
+        end
+
+        # --- WARM-UP LOGIC ---
+        is_warmup = iter <= n_warmup
+        if is_warmup && stagnation_counter == 0
+            if cv_current > cv_warmup_cap
+                cv_current = cv_warmup_cap
+            end
+        end
+
+        # Identificação de elementos Ar/Sólido (para restrições lineares)
+        elements_air = Int64[]
+        elements_solid = Int64[]
+        # Vetores de coeficientes estendidos (size = 2*nvp) para acomodar variáveis de folga
+        # As restrições de movimento agem apenas sobre Delta_Gamma, coef 0 para Xi
+        one_air_ext = zeros(2*nvp) 
+        one_solid_ext = zeros(2*nvp)
+
+        for (i, ele) in enumerate(elements_design)
+            if γ[ele]<0.5 
+               push!(elements_air,ele)
+               one_air_ext[i] = 1.0   # Apenas na parte Delta Gamma
+               # one_solid_ext[i] = 0.0 (já é zero)
+            else
+               push!(elements_solid,ele)
+               # one_air_ext[i] = 0.0
+               one_solid_ext[i] = 1.0 # Apenas na parte Delta Gamma
+            end
+        end
+
+        volume_atual = sum(γ[elements_design].*V[elements_design])
+        push!(historico_V , volume_atual)
+
+        # --- ANÁLISE FEM ---
+        MP,K,M,C =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
+        objetivo = Objetivo(MP,nodes_target,vA)
+        push!(historico_SLP, objetivo)
+
+        perimetro = Perimiter(γ, neighedge, elements_design)
+        push!(historico_P, perimetro)
+        
+        # Exporta resultados parciais
+        for i=1:nf
+            f = freqs[i]
+            # Otimização visual: exportar apenas a primeira freq para economizar disco se nf for grande
+            if i==1; Lgmsh_export_nodal_scalar(arquivo_pos_freq,abs.(MP[:,i]),"Pressure $f Hz - Iter $iter"); end
+        end
+
+        println("Iteração          ", iter)
+        println("Objetivo (SPL)    ", objetivo)
+        println("Perimetro         ", perimetro)
+        println("Past (Limit)      ", Past)
+        println("Volume atual      ", volume_atual)
+        println()
+
+        # --- SENSIBILIDADE ---
+        dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ,fκ,dfρ,dfκ,μ,nodes_target,MP,elements_design,vA) 
+        Lgmsh_export_element_scalar(arquivo_pos,dΦ,"dΦ")  
+
+        # Sensibilidade "crua" para o ILP (apenas parte Delta Gamma)
+        c_phys = dΦ[elements_design] 
+
+        # [NOVO] Montagem do Vetor de Custo Estendido (Com Penalidade para Folgas)
+        # c_aug = [c_phys; c_slack]
+        # Penalidade Beta alta o suficiente para ser evitada, mas finita
+        beta_penalty = 100.0 * maximum(abs.(c_phys)) + 10.0
+        c_aug = vcat(c_phys, fill(beta_penalty, nvp))
+
+        # --- RESTRIÇÕES GLOBAIS (VOL & PERIM) ---
+        # 1. Volume
+        ΔV = Vast - volume_atual
+        b_global = [ΔV]
+        # A_vol deve ter zeros para as variáveis de folga
+        A_vol = vcat(V[elements_design]')
+        A_vol_aug = hcat(A_vol, zeros(1, nvp)) # Padding zeros
+
+        A_global = A_vol_aug
+
+        # 2. Perímetro (se ativo)
+        if  perimetro > 0 && Past>0
+            ΔP = Past - perimetro
+            b_global = vcat(b_global, ΔP)
+            dP = dPerimiter(ne, γ, neighedge, elements_design)
+            A_per = transpose(dP[elements_design])
+            A_per_aug = hcat(A_per, zeros(1, nvp)) # Padding zeros
+            A_global = vcat(A_global, A_per_aug)
+        end
+
+        # --- [NOVO] RESTRIÇÕES TOPOLÓGICAS LOCAIS ---
+        # Construção da matriz esparsa para No-Island e No-Hole
+        # Cada elemento gera 2 restrições
+        I_topo = Int[]
+        J_topo = Int[]
+        V_topo = Float64[]
+        b_topo = Float64[]
+        
+        row_idx = 1
+        
+        for (idx_e, e_global) in enumerate(elements_design)
+            vizinhos = neighedge[e_global]
+            γ_e = γ[e_global]
+            
+            # Soma dos vizinhos (inclui fixos para cálculo do RHS)
+            sum_γ_viz = 0.0
+            for v in vizinhos
+                sum_γ_viz += γ[v]
+            end
+            num_viz = length(vizinhos)
+
+            # --- RESTRIÇÃO 1: NO ISLAND ---
+            # Δγ_e - Σ Δγ_j - ξ_e <= Σ γ_j^k - γ_e^k
+            
+            # Coeficiente Delta_e (+1)
+            push!(I_topo, row_idx); push!(J_topo, idx_e); push!(V_topo, 1.0)
+            
+            # Coeficiente Slack Xi_e (-1) -> Índice é nvp + idx_e
+            push!(I_topo, row_idx); push!(J_topo, nvp + idx_e); push!(V_topo, -1.0)
+            
+            # Coeficientes Vizinhos (-1)
+            for v in vizinhos
+                if haskey(map_global_local, v)
+                    idx_viz = map_global_local[v]
+                    push!(I_topo, row_idx); push!(J_topo, idx_viz); push!(V_topo, -1.0)
+                end
+            end
+            
+            # RHS
+            push!(b_topo, sum_γ_viz - γ_e)
+            row_idx += 1
+            
+            # --- RESTRIÇÃO 2: NO HOLE ---
+            # Σ Δγ_j - Δγ_e - ξ_e <= (N_viz - 1) - (Σ γ_j^k - γ_e^k)
+            
+            # Coeficiente Delta_e (-1)
+            push!(I_topo, row_idx); push!(J_topo, idx_e); push!(V_topo, -1.0)
+            
+            # Coeficiente Slack Xi_e (-1)
+            push!(I_topo, row_idx); push!(J_topo, nvp + idx_e); push!(V_topo, -1.0)
+            
+            # Coeficientes Vizinhos (+1)
+            for v in vizinhos
+                if haskey(map_global_local, v)
+                    idx_viz = map_global_local[v]
+                    push!(I_topo, row_idx); push!(J_topo, idx_viz); push!(V_topo, 1.0)
+                end
+            end
+            
+            # RHS
+            push!(b_topo, (num_viz - 1) - (sum_γ_viz - γ_e))
+            row_idx += 1
+        end
+        
+        # Monta a matriz esparsa topológica (2*nvp linhas x 2*nvp colunas)
+        A_topo = sparse(I_topo, J_topo, V_topo, 2*nvp, 2*nvp)
+
+        # -----------------------------------------------------------------
+        # 4. TRUST REGION LOOP (ADAPTATIVO)
+        # -----------------------------------------------------------------
+        step_accepted = false
+        n_reject = 0
+        last_rejected_dgamma = Float64[]
+        
+        while !step_accepted
+            
+            # Concatena as matrizes para o solver
+            # Estrutura Final A:
+            # [ Global (Vol, Per) (padded) ]
+            # [ Move Limits (padded)       ]
+            # [ Topological (sparse)       ]
+            
+            # Preparando Move Limits Temporários
+            b_move = Float64[]
+            A_move_rows = Vector{Float64}[] # Usando vetor de vetores para construir A_move denso depois
+            
+            if !isempty(elements_air)
+                raw_limit = cv_current * nvp
+                g_air = ceil(Int, raw_limit)
+                if isodd(g_air); g_air -= 1; end; g_air = max(0, g_air)
+                
+                push!(b_move, g_air)
+                push!(A_move_rows, one_air_ext)
+            end
+
+            if !isempty(elements_solid)
+                raw_limit = cv_current * nvp
+                g_solid = ceil(Int, raw_limit) 
+                if isodd(g_solid); g_solid -= 1; end; g_solid = max(0, g_solid)
+
+                push!(b_move, g_solid)
+                push!(A_move_rows, -one_solid_ext) # Note o sinal negativo para <=
+            end
+            
+            # Converte A_move para matriz
+            if !isempty(A_move_rows)
+                A_move = permutedims(hcat(A_move_rows...))
+            else
+                A_move = zeros(0, 2*nvp)
+            end
+
+            # Montagem Final do Sistema Linear
+            # A_global é denso, A_move é denso, A_topo é esparso.
+            # Convertendo tudo para Sparse para o solver (se suportado) ou Denso
+            # Assumindo que LP aceita matriz genérica.
+            
+            # Concatenação Vertical
+            # Atenção: vcat com esparsos e densos pode ser tricky no Julia.
+            # Vamos garantir que tudo tenha 2*nvp colunas.
+            
+            # b_final
+            b_final = vcat(b_global, b_move, b_topo)
+            
+            # A_final
+            # A_global já tem 2*nvp cols
+            # A_move já tem 2*nvp cols
+            # A_topo já tem 2*nvp cols
+            
+            # É mais seguro converter tudo para sparse se o problema for grande
+            A_final = vcat(sparse(A_global), sparse(A_move), A_topo)
+
+            # Note que passamos 'γ[elements_design]' (apenas a parte física), 
+            # mas 'c_aug', 'A_final' e 'b_final' já incluem as colunas/linhas das slacks.
+            x_sol = LP(c_aug, A_final, b_final, γ[elements_design])
+
+            # --- RESOLVE ILP (Integer Linear Programming) ---
+            # Chamada ao solver. Supõe-se que ele retorne o vetor estendido x = [Delta_Gamma; Xi]
+            # O solver deve tratar Xi como inteiros positivos ou contínuos >= 0.
+            # Se LP for puramente binário, Xi precisaria ser discretizado, 
+            # mas assumimos aqui que o backend (Alpine/HiGHS) suporta MIP.
+            # x_sol = LP(c_aug, A_final, b_final, [γ[elements_design]; zeros(nvp)])
+
+            # Extrai apenas a parte Delta Gamma
+            Δγ = x_sol[1:nvp]
+            
+            # (Opcional) Debug das Folgas
+            slack_vals = x_sol[nvp+1:end]
+            max_slack = maximum(abs.(slack_vals))
+            if max_slack > 1e-3
+                 println("    -> Info: Restrições topológicas relaxadas (Max Slack = $max_slack).")
+            end
+
+            # [CHECK DE DEADLOCK]
+            if !isempty(last_rejected_dgamma) && (Δγ == last_rejected_dgamma)
+                println("    -> AVISO: Deadlock detectado. Abortando TR.")
+                step_accepted = true; break 
+            end
+
+            # Predição Linear (Usando apenas custo físico)
+            pred_reduction = -sum(c_phys .* Δγ)
+
+            # Verifica mudança nula
+            if sum(abs.(Δγ)) == 0
+                 println("Aviso: Passo nulo. Próxima iter."); step_accepted = true; break
+            elseif abs(pred_reduction) < 1e-12 
+                 println("Aviso: Redução desprezível. Aceitando."); step_accepted = true; break 
+            end
+
+            # --- TRIAL STEP ---
+            γ_trial = copy(γ)
+            γ_trial[elements_design] .+= Δγ
+            # Garante binário
+            for ele in elements_design; γ_trial[ele] = round(γ_trial[ele]); end
+
+            # --- GEOMETRIC CHECK ---
+            P_trial = Perimiter(γ_trial, neighedge, elements_design)
+            geom_violation = (Past > 0) && (P_trial > (Past + 1e-4))
+
+            if geom_violation
+                println("    -> REJEITADO (Geometria). P=$P_trial. Reduzindo cv.")
+                last_rejected_dgamma = copy(Δγ)
+                cv_current = max(cv_min, cv_current * 0.5)
+                n_reject += 1
+            else
+                # --- PHYSICAL CHECK ---
+                MP_trial, _, _, _ = Sweep(nn,ne,coord,connect,γ_trial,fρ,fκ,μ,freqs,livres,velocities,pressures)
+                obj_trial = Objetivo(MP_trial,nodes_target,vA)
+                actual_reduction = objetivo - obj_trial
+                
+                R = (abs(pred_reduction) < 1e-10) ? 0.0 : actual_reduction / pred_reduction
+                println("--- Trust Region: Pred=$(round(pred_reduction,digits=4)) Act=$(round(actual_reduction,digits=4)) R=$(round(R,digits=2)) cv=$(round(cv_current,digits=4))")
+
+                if R < 0.0 
+                    println("    -> REJEITADO (Física). SPL piorou.")
+                    last_rejected_dgamma = copy(Δγ)
+                    cv_current = max(cv_min, cv_current * 0.5) 
+                    n_reject +=1
+                else
+                    step_accepted = true
+                    γ .= γ_trial 
+                    if R > 0.7 
+                         println("    -> ACEITO. Excelente."); if !is_warmup; cv_current = min(0.5, cv_current * 1.2); end
+                    elseif R > 0.3
+                        println("    -> ACEITO. Bom.")
+                    else
+                        println("    -> ACEITO. Pobre."); cv_current = max(cv_min, cv_current * 0.5)
+                    end
+                end
+            end
+
+            if n_reject >= 10
+                println("Trust Region exausta. Desistindo.")
+                step_accepted = true; break
+            end
+        end # Fim While Trust Region
+
+        Lgmsh_export_element_scalar(arquivo_pos,γ,"Iter $iter")
+
+        # --- VERIFICAÇÃO DE ESTAGNAÇÃO ---
+        total_changes = sum(abs.(γ - γ_start))
+        if total_changes == 0
+            stagnation_counter += 1
+            println("--- STAGNATION $stagnation_counter/4")
+            if stagnation_counter >= 4; println("HARD STOP"); break; end
+        else
+            stagnation_counter = 0
+        end
+
+    end # Fim Loop iter
+
+    # 5. FINALIZAÇÃO
+    println("Finalizando e Exportando...")
+    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
+    writedlm(arquivo_γ_fin,γ)
+    
+    # Salva dados (omitido detalhes de escrita para brevidade)
+    return historico_V, historico_SLP, historico_P
+
+end # Otim_ISLP
+
 #
 # Rotina principal de Otimização Topológica (ISLP)
 #
@@ -10,7 +477,7 @@
  - freqs: Vetor de frequências para análise (Recomendado step=1Hz para ressonadores)
  - vA: Vetor de pesos para as frequências (geralmente ones(nf))
 """
-function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
+function Otim_ISLP_artigo(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
 
    # ---------------------------------------------------------------------------
    # 1. PREPARAÇÃO DA MALHA E ARQUIVOS

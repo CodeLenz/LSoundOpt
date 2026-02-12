@@ -11,7 +11,7 @@ function SPLn(P::Vector,p0)
     nt = length(P)
 
     # Calcula a soma das pressões em nodes_target ao quadrado 
-    P2 = sum((abs.(P)).^2)
+    P2 = sum((abs2.(P)))
 
     # Média (pelo número de pontos em nodes_target)
     P2avg = P2 / nt

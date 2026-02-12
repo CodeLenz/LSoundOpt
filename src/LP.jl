@@ -1,9 +1,101 @@
+#
+# n => número de variáveis de projeto (design vars)
+# O vetor 'c' e as colunas de 'A' têm tamanho n_total = n_design + n_slack
+#
+function LP(c, A, b, γ_design)
 
+    # Verifica quantas variáveis de projeto temos (apenas as físicas)
+    n_design = length(γ_design)
+    
+    # Verifica o tamanho total do problema (incluindo slacks)
+    n_total = length(c)
+    
+    # Número de slacks
+    n_slack = n_total - n_design
+
+    # -----------------------------------------------------------
+    # SOLVER SETUP
+    # O problema é um MILP (Mixed-Integer Linear Programming).
+    # Não é necessário usar Alpine. O HiGHS é excelente para isso.
+    # -----------------------------------------------------------
+    model = Model(optimizer_with_attributes(HiGHS.Optimizer, 
+                  "output_flag" => false, 
+                  "presolve" => "on",
+                  "time_limit" => 60.0)) # Timeout de segurança
+
+    # -----------------------------------------------------------
+    # DEFINIÇÃO DE VARIÁVEIS E LIMITES
+    # -----------------------------------------------------------
+    
+    # Cria as variáveis de decisão do modelo (x[1...n_total])
+    # Vamos definir os limites individualmente
+    @variable(model, x[1:n_total], Int)
+
+    # 1. Variáveis de Projeto (Delta Gamma): Indices 1 até n_design
+    # Devem respeitar a lógica binária: 
+    # Se γ=0 -> Δγ ∈ {0, 1}   (Limites: 0, 1)
+    # Se γ=1 -> Δγ ∈ {-1, 0}  (Limites: -1, 0)
+    for i = 1:n_design
+        lb = -round(Int, γ_design[i])      # 0 ou -1
+        ub =  round(Int, 1 - γ_design[i])  # 1 ou 0
+        set_lower_bound(x[i], lb)
+        set_upper_bound(x[i], ub)
+    end
+
+    # 2. Variáveis de Folga (Xi): Indices n_design+1 até n_total
+    # Devem ser apenas não-negativas: ξ ∈ {0, 1, 2, ...}
+    # (Como penalizamos com Beta alto, elas tenderão a zero)
+    if n_slack > 0
+        for i = (n_design + 1):n_total
+            set_lower_bound(x[i], 0.0)
+            # Não definimos upper bound (ou definimos um valor alto seguro se necessário)
+            # set_upper_bound(x[i], 10.0) 
+        end
+    end
+
+    # -----------------------------------------------------------
+    # RESTRIÇÕES E OBJETIVO
+    # -----------------------------------------------------------
+
+    # Monta todas as restrições lineares (Globais + Topológicas)
+    # A matriz A já contém as colunas para Delta Gamma e para Xi
+    @constraint(model, A * x .<= b)
+
+    # Monta a função objetivo (Custo Físico + Penalidade Beta)
+    @objective(model, Min, c' * x)
+
+    # -----------------------------------------------------------
+    # SOLUÇÃO
+    # -----------------------------------------------------------
+    # optimize!(model)
+    # Redireciona stdout para evitar poluição no terminal se o solver for verboso
+    # redirect_stdout((()->optimize!(model)), open(devnull, "w"))
+    optimize!(model)
+
+    status = termination_status(model)
+
+    if status == MOI.OPTIMAL
+        Δxopt = value.(x)
+        return Δxopt
+    elseif status == MOI.INFEASIBLE
+        println("LP: Problema Infactível!")
+        return zeros(n_total) # Retorna nulo para não quebrar, o loop principal deve tratar
+    else
+        println("LP: Status de término não ideal: $status")
+        # Tenta recuperar o melhor valor viável encontrado
+        if has_values(model)
+            return value.(x)
+        else
+            return zeros(n_total)
+        end
+    end
+
+end
 
 #
 # n => número de variáveis de projeto
 #
-function LP(c, A, b, γ)
+function LP_anterior(c, A, b, γ)
 
    #
    # Cria o modelo vazio e associa a um otimizador
