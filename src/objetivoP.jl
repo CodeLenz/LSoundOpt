@@ -1,35 +1,29 @@
 # ===================================================================================
-# Função Objetivo P-Norm Normalizada
+# Função Objetivo P-Norm ABSOLUTA (Sem normalização por espectro de referência)
 #
-# Minimiza a média generalizada da TRANSMISSÃO RELATIVA (P_curr / P_ref).
-# Isso aproxima a maximização do Insertion Loss mínimo na banda.
-#
-function ObjetivoP(MP::Matrix, nodes_target::Vector, A::Vector, P_ref::Vector; p_norm=8.0)
+function ObjetivoP(MP::Matrix, nodes_target::Vector, A::Vector, p0=20E-6; p_norm=8.0)
 
     Nf = size(MP, 2)
     Rn_values = zeros(Float64, Nf)
     
     coluna = 1
     for P in eachcol(MP)
-        # Pressão quadrática média atual
+        # Pressão quadrática média absoluta
         P2_avg = sum(abs2.(P[nodes_target])) / length(nodes_target)
         
-        # Razão de Potência Normalizada (R_hat do texto)
-        # R_n = P_atual / P_referencia
-        # Nota: p0 cancela, então usamos direto as médias quadráticas
-        Rn = P2_avg / P_ref[coluna]
+        # Razão adimensional absoluta (P_rms / p0)^2
+        Rn = P2_avg / (p0^2)
         
-        # Aplica peso de frequência se houver
+        # Armazena
         Rn_values[coluna] = A[coluna] * Rn
         coluna += 1
     end
 
-    # Agregação P-Norm
+    # Média Generalizada das Potências Adimensionais
+    # Se p_norm for alto (ex: 8), isso foca nos picos de pressão
     soma_potencias = sum(Rn_values .^ p_norm)
     Mp = soma_potencias / Nf
 
-    # Retorna em dB: 10 * log10( (Mp)^(1/p) )
-    Φ = (10.0 / p_norm) * log10(Mp)
-
-    return Φ
+    # Retorna em dB
+    return (10.0 / p_norm) * log10(Mp)
 end

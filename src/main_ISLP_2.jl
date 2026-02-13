@@ -78,34 +78,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     Fix_γ!(γ,elements_fixed,values_fixed)
     writedlm(arquivo_γ_ini,γ)
 
-    # ---------------------------------------------------------------------------
-    # CÁLCULO DA REFERÊNCIA (CONFIG INICIAL)
-    # ---------------------------------------------------------------------------
-    println("Calculando resposta de referência (P_ref) para normalização...")
     
-    # Faz um Sweep com a configuração inicial (geralmente Ar puro, γ=0)
-    # Se você quiser que a referência seja sempre "Ar puro" independente do γ inicial,
-    # crie um vetor temporário de zeros aqui.
-    γ_ref = zeros(ne) 
-    
-    # Faz o sweep
-    MP_ref, _, _, _ = Sweep(nn,ne,coord,connect,γ_ref,fρ,fκ,μ,freqs,livres,velocities,pressures)
-    
-    # Vetor para armazenar a Potência Quadrática Média de Referência para cada freq
-    P_ref_values = zeros(Float64, nf)
-    
-    for i = 1:nf
-        # Calcula média quadrática (|p|^2) nos nós target
-        P2_avg_ref = sum(abs2.(MP_ref[nodes_target, i])) / length(nodes_target)
-        
-        # Proteção contra divisão por zero (caso a referência seja zero numérico)
-        if P2_avg_ref < 1e-20
-            P2_avg_ref = 1e-20 
-        end
-        
-        P_ref_values[i] = P2_avg_ref
-    end
-
     nodes_mask = sort(vcat(nodes_open,nodes_pressure))
     livres = setdiff(collect(1:nn),nodes_mask)
    
@@ -197,7 +170,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
 
         # --- ANÁLISE FEM ---
         MP,K,M,C =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
-        objetivo = ObjetivoP(MP,nodes_target,vA,P_ref_values)
+        objetivo = ObjetivoP(MP,nodes_target,vA)
         push!(historico_SLP, objetivo)
 
         perimetro = Perimiter(γ, neighedge, elements_design)
@@ -218,7 +191,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         println()
 
         # --- SENSIBILIDADE ---
-        dΦ = DerivadaP(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ,fκ,dfρ,dfκ,μ,nodes_target,MP,elements_design,vA,P_ref_values) 
+        dΦ = DerivadaP(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ,fκ,dfρ,dfκ,μ,nodes_target,MP,elements_design,vA)
         Lgmsh_export_element_scalar(arquivo_pos,dΦ,"dΦ")  
 
         # Sensibilidade "crua" para o ILP (apenas parte Delta Gamma)
