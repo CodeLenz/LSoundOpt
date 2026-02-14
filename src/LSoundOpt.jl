@@ -12,17 +12,14 @@ module LSoundOpt
    using Lgmsh
    using Gmsh
    using DelimitedFiles
+   using Printf
 
    # ProgressMeter
    using ProgressMeter
 
    # Pacotes de otimização
    using JuMP
-   #using Alpine
-   #using Gurobi
-   #using Ipopt
    using HiGHS
-   #using Cbc
 
    # Inclui os arquivos do pacote
 
@@ -74,6 +71,18 @@ module LSoundOpt
 
    # Processa a FRF da solução 
    include("processa_FRF.jl")
+
+   # Gerencia arquivos de saída
+   include("arquivos.jl")
+
+   # Heurística do algoritmo
+   include("heuristica.jl")
+
+   # Linearização das restrições 
+   include("lineariza.jl")
+
+   # Trust-region
+   include("trust_region.jl")
 
    # Arquivo principal 
    include("main_ISLP_2.jl")

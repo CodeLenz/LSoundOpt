@@ -12,10 +12,6 @@ function Le_YAML(arquivo::AbstractString,ver=1.0;verbose=false)
     # Número de iterações 
     niter = 100
 
-    # Parâmetros do ISLP
-    ϵ1 = 0.1
-    ϵ2 = 0.1
-
     # Fração de volume (restrição de volume)
     vf = 0.5
 
@@ -25,11 +21,11 @@ function Le_YAML(arquivo::AbstractString,ver=1.0;verbose=false)
     # Perímetro limite (restrição de perímetro)
     perimetro = 0.0
 
-    # Fator de mudança cheio/vazio
-    fatorcv = 5E-3
-
     # Raio do filtro 
     raio = 0.0
+
+    # Fator inicial de atualização ar/sólido
+    fatorcv = 5E-2
 
     # Primeiro lemos o arquivo de dados
     dados = YAML.load_file(arquivo)
@@ -83,46 +79,7 @@ function Le_YAML(arquivo::AbstractString,ver=1.0;verbose=false)
     else
         throw("Le_YAML::raio é uma informação obrigatória") 
     end
-
-    # Recupera ϵ1
-    if haskey(dados,"ϵ1")
-
-        # recupera como string
-        string_eps1 = dados["ϵ1"]
-
-        # Se foi informado como string, convertemos
-        if isa(string_eps1,String)
-            ϵ1 =  parse(Float64,string_eps1)
-        else
-            ϵ1 = string_eps1
-        end
  
-        # Testa consistência da informação 
-        (ϵ1<=0 || ϵ1>=1) && throw("Le_YAML::ϵ1 deve deve estar em (0,1) ") 
-        
-    else
-        println("Parâmetro ϵ1 não foi informado no .yaml. Utilizando o valor padrão ", ϵ1)
-    end
-
-    # Recupera ϵ2
-    if haskey(dados,"ϵ2")
-
-        # recupera como string
-        string_eps2 = dados["ϵ2"]
-
-        # Se foi informado como string, convertemos
-        if isa(string_eps2,String)
-            ϵ2 =  parse(Float64,string_eps2)
-        else
-            ϵ2 = string_eps2
-        end
- 
-        # Testa consistência da informação 
-        (ϵ2<=0 || ϵ2>=1) && throw("Le_YAML::ϵ2 deve deve estar em (0,1) ") 
-        
-    else
-        println("Parâmetro ϵ2 não foi informado no .yaml. Utilizando o valor padrão ", ϵ2)
-    end
 
     # Recupera o número de iterações
     if haskey(dados,"niter")
@@ -185,7 +142,7 @@ function Le_YAML(arquivo::AbstractString,ver=1.0;verbose=false)
     end
 
 
-    # Fator de atualização de air/solid
+    # Recupera fatorcv - taxa de atualização ar/sólido inicial
     if haskey(dados,"fatorcv")
 
         # recupera como string
@@ -193,19 +150,22 @@ function Le_YAML(arquivo::AbstractString,ver=1.0;verbose=false)
 
         # Se foi informado como string, convertemos
         if isa(string_fatorcv,String)
-            fatorcv =  parse(Float64,string_fatorcv)
+           fatorcv =  parse(Float64,string_fatorcv)
         else
-            fatorcv = string_fatorcv
+           fatorcv = string_fatorcv
         end
- 
+
         # Testa consistência da informação 
-        (fatorcv<=0||fatorcv>=1) && throw("Le_YAML::Fator de mudança para cheio/vazio  maior do que zero e menor do que um") 
-        
+        (fatorcv<0 || fatorcv>=1) && throw("Le_YAML::fatorcv deve ser >=0 e (bem) menor do que 1.0") 
+
+
     else
-        println("fatorcv não foi informado no .yaml. Utilizando o valor padrão ", fatorcv)
+        throw("Le_YAML::raio é uma informação obrigatória") 
     end
+ 
+
 
    # Retorna os dados 
-   return raio, niter, ϵ1, ϵ2,  vf, perimetro, fatorcv, μ
+   return raio, niter, vf, perimetro, μ, fatorcv
 
 end

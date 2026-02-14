@@ -42,7 +42,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed = LSound.Parsemsh_Daniele(meshfile)
     
     # Le os dados do arquivo yaml
-    raio_filtro, niter, ϵ1, ϵ2,  vf, Past, fatorcv, μ = Le_YAML(arquivo_yaml)
+    raio_filtro, niter, vf, Past, μ, fatorcv = Le_YAML(arquivo_yaml)
 
     # Lista com os elementos que são de projeto
     elements_design = setdiff(1:ne,sort!(elements_fixed))

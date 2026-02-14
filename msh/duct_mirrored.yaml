@@ -9,41 +9,17 @@ versao: 1.0
 volfrac: 0.9
 
 # Raio do filtro (obrigatório) 0.008
-raio: 0.0
-
-# Parâmetros de ajuste das restrições 
-# linearizadas --Não está sendo utilizado
-ϵ1: 0.001
-ϵ2: 0.001
+raio: 0.008
 
 # Parâmetro para o amortecimento 
 # 23C, 1atm
 μ: 1.83E-5
 
 # Fator de atualização para air/solid
-# --Não está sendo utilizado
-fatorcv: 1E-1
+fatorcv: 5E-2
 
 # Upper Perimiter constraint
 perimetro: 0.0
 
 # Número de iterações de otimização (valor padrão é 100)
 niter: 100
-
-# Parametrização do material 
-# --Não está sendo utilizado
-parametrizacao: PEREIRA
-
-# Número de iterações para a média histórica
-# --Não está sendo utilizado
-nhisto: 1
-
-# Valor mínimo da variável de projeto
-γmin: 0.0
-
-# Valor máximo da variável de projeto
-γmax: 1.0
-
-# Valor do 'ponto de partida'
-# --Não está sendo utilizado
-partida: 1.0

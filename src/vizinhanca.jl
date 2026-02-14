@@ -74,7 +74,7 @@ function Vizinhanca(ne,centroides,raio_filtro,elements_design::Vector)
     # Retorna o vetor de vetores com os vizinhos do elemento
     # e também os pesos. Esses vetores de vetores 
     # contém somente os elementos de projeto
-    return vizinhos, pesos
+    return vizinhos, pesos, n_min_viz, n_max_viz
 
 end
 
