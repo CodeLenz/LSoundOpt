@@ -81,7 +81,123 @@ end
 #
 # Find all elements that share edges with the current element
 #
-function NeighborEdges(ne,connect,elements_design)
+function NeighborEdges(ne, connect, elements_design)
+
+    # 1. Dicionário para mapear Face -> Elementos
+    # Chave: Vetor ordenado de nós da face (para garantir unicidade)
+    # Valor: Vetor de IDs dos elementos que compartilham essa face
+    face_map = Dict{Vector{Int64}, Vector{Int64}}()
+    
+    # Vetor de saída (lista de adjacência)
+    # Usamos Dict{Int, Vector} para lidar com IDs esparsos se houver
+    # Se seus IDs forem contíguos de 1 a ne, pode usar Vector{Vector}
+    vizinhos = Dict{Int64, Vector{Int64}}()
+    for ele in elements_design
+        vizinhos[ele] = Int64[]
+    end
+
+    # Construção do Mapa de Faces ---
+    for ele in elements_design
+        etype = connect[ele, 1]
+        nodes = connect[ele, 3:end]
+        
+        # Obtém as faces baseadas no tipo do elemento
+        faces = Get_Element_Faces(etype, nodes)
+        
+        for f in faces
+
+            # Ordena para que [1,2,3] seja igual a [3,1,2]
+            sort!(f) 
+            
+            if !haskey(face_map, f)
+                face_map[f] = Int64[]
+            end
+            
+            push!(face_map[f], ele)
+        end
+    end
+
+    # Conexão dos Vizinhos ---
+    # Se uma face tem 2 elementos associados, eles são vizinhos.
+    for (face, elems) in face_map
+        if length(elems) == 2
+            e1, e2 = elems[1], elems[2]
+            
+            # Adiciona bidirecionalmente (evita duplicatas se já houver)
+            if !(e2 in vizinhos[e1]); push!(vizinhos[e1], e2); end
+            if !(e1 in vizinhos[e2]); push!(vizinhos[e2], e1); end
+        elseif length(elems) > 2
+            println("Aviso: Aresta/Face não-manifold detectada (mais de 2 elementos compartilhados).")
+        end
+    end
+
+    # Converte de volta para Vector{Vector} se seus IDs forem 1..ne contíguos
+    # Caso contrário, retorne o Dict vizinhos.
+    vizinhos_vec = Vector{Vector{Int64}}(undef, ne)
+    for i in 1:ne
+        if haskey(vizinhos, i)
+            vizinhos_vec[i] = vizinhos[i]
+        else
+            vizinhos_vec[i] = Int64[]
+        end
+    end
+
+    return vizinhos_vec
+end
+
+#
+# Função auxiliar para extrair faces/arestas baseada no padrão Gmsh
+#
+function Get_Element_Faces(etype, nodes)
+    faces = Vector{Vector{Int64}}()
+    
+    if etype == 2 # Triângulo (3 nós) -> Faces são Arestas
+        push!(faces, [nodes[1], nodes[2]])
+        push!(faces, [nodes[2], nodes[3]])
+        push!(faces, [nodes[3], nodes[1]])
+        
+    elseif etype == 3 # Quadrilátero (4 nós) -> Faces são Arestas
+        push!(faces, [nodes[1], nodes[2]])
+        push!(faces, [nodes[2], nodes[3]])
+        push!(faces, [nodes[3], nodes[4]])
+        push!(faces, [nodes[4], nodes[1]])
+        
+    elseif etype == 4 # Tetraedro (4 nós) -> Faces são Triângulos
+        push!(faces, [nodes[1], nodes[2], nodes[3]])
+        push!(faces, [nodes[1], nodes[2], nodes[4]])
+        push!(faces, [nodes[1], nodes[3], nodes[4]])
+        push!(faces, [nodes[2], nodes[3], nodes[4]])
+        
+    elseif etype == 5 # Hexaedro (8 nós) -> Faces são Quads
+        push!(faces, [nodes[1], nodes[2], nodes[6], nodes[5]])
+        push!(faces, [nodes[2], nodes[3], nodes[7], nodes[6]])
+        push!(faces, [nodes[3], nodes[4], nodes[8], nodes[7]])
+        push!(faces, [nodes[4], nodes[1], nodes[5], nodes[8]])
+        push!(faces, [nodes[1], nodes[2], nodes[3], nodes[4]]) # Base
+        push!(faces, [nodes[5], nodes[6], nodes[7], nodes[8]]) # Topo
+
+    elseif etype == 6 # Prisma (6 nós) -> 2 Tri, 3 Quads
+        push!(faces, [nodes[1], nodes[2], nodes[3]]) # Base Tri
+        push!(faces, [nodes[4], nodes[5], nodes[6]]) # Topo Tri
+        push!(faces, [nodes[1], nodes[2], nodes[5], nodes[4]]) # Quad
+        push!(faces, [nodes[2], nodes[3], nodes[6], nodes[5]]) # Quad
+        push!(faces, [nodes[3], nodes[1], nodes[4], nodes[6]]) # Quad
+
+    elseif etype == 7 # Pirâmide (5 nós) -> 1 Quad (Base), 4 Tri (Lados)
+        push!(faces, [nodes[1], nodes[2], nodes[3], nodes[4]]) # Base Quad
+        push!(faces, [nodes[1], nodes[2], nodes[5]]) # Tri
+        push!(faces, [nodes[2], nodes[3], nodes[5]]) # Tri
+        push!(faces, [nodes[3], nodes[4], nodes[5]]) # Tri
+        push!(faces, [nodes[4], nodes[1], nodes[5]]) # Tri
+    
+    else
+        error("Get_Element_Faces:: Elemento não suportado: $etype")
+    end
+    
+    return faces
+end
+
+function NeighborEdgesOLD(ne,connect,elements_design)
 
     # Vector of vectors
     vizinhos = Vector{Vector{Int64}}(undef,ne)
