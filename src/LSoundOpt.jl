@@ -18,11 +18,11 @@ module LSoundOpt
 
    # Pacotes de otimização
    using JuMP
-   using Alpine
-   using Gurobi
-   using Ipopt
+   #using Alpine
+   #using Gurobi
+   #using Ipopt
    using HiGHS
-   using Cbc
+   #using Cbc
 
    # Inclui os arquivos do pacote
 
@@ -55,13 +55,13 @@ module LSoundOpt
    include("objetivo.jl")
 
    # Norma P
-   include("objetivoP.jl")
+   # include("objetivoP.jl")
 
    # Calcula a derivada da função objetivo SPL
    include("sensibilidade.jl")
 
    # Calcula a derivada da função objetivo norma P
-   include("sensibilidadeP.jl")
+   # include("sensibilidadeP.jl")
 
    # Calcula o perímetro e seu gradiente
    include("perimiter.jl")

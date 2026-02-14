@@ -8,8 +8,8 @@ versao: 1.0
 # Fração de volume (obrigatório)
 volfrac: 0.9
 
-# Raio do filtro (obrigatório) 0.008
-raio: 0.0
+# Raio do filtro (obrigatório)
+raio: 0.008 
 
 # Parâmetros de ajuste das restrições 
 # linearizadas --Não está sendo utilizado
