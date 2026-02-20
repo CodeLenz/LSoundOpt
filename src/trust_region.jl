@@ -1,11 +1,9 @@
 #
-# Trust-Region
+# Trust-Region (Com Cache de Soluções)
 #
-#
-# Trust-Region (Corrigido: Não aceita passo ruim em caso de Deadlock)
-#
-function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_curr, Past, neighedge, fem_data)
+function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_curr, Past, neighedge, fem_data, solution_cache)
     
+    # Desempacota os dados
     nn, ne, coord, connect, fρ, fκ, μ, freqs, livres, vels, press, nodes_target, vA = fem_data
     nvp = length(elems_design)
     
@@ -24,8 +22,11 @@ function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_cur
     # Se o loop falhar/desistir, retornamos isso (passo nulo).
     γ_final = copy(γ_curr)
     
-    one_air_ext = zeros(2*nvp);   one_air_ext[1:nvp] = Float64.(is_air)
-    one_solid_ext = zeros(2*nvp); one_solid_ext[1:nvp] = Float64.(.!is_air)
+    one_air_ext = zeros(2*nvp)
+    one_air_ext[1:nvp] = Float64.(is_air)
+
+    one_solid_ext = zeros(2*nvp)
+    one_solid_ext[1:nvp] = Float64.(.!is_air)
 
     cv_min = 1.0001 / nvp
 
@@ -44,8 +45,9 @@ function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_cur
 
         # --- CORREÇÃO DE DEADLOCK ---
         if !isempty(last_rej_dgamma) && (Δγ == last_rej_dgamma)
-            println("    -> AVISO: Deadlock no Trust Region (ILP repetiu passo rejeitado).")
-            println("    -> Ação: Desistir desta iteração (Passo Nulo) para evitar piora.")
+            println("    -> Deadlock no Trust Region (ILP repetiu passo rejeitado).")
+            println("    -> Desistindo desta iteração (Passo Nulo) para evitar piora.")
+            
             # Aceitamos "sair do loop", mas NÃO aplicamos o Δγ. Retorna o γ_final original.
             step_accepted = true
             break 
@@ -72,13 +74,31 @@ function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_cur
             last_rej_dgamma = copy(Δγ)
             cv = max(cv_min, cv * 0.5)
             n_reject += 1
-            if n_reject >= 10; println("TR exausta."); break; end
+            if n_reject >= 10
+                println("TR exausta.")
+                break
+            end
             continue
         end
 
-        # Check Físico
-        MP_t, _, _, _ = Sweep(nn, ne, coord, connect, γ_trial, fρ, fκ, μ, freqs, livres, vels, press)
-        obj_trial = Objetivo(MP_t, nodes_target, vA)
+        # Check Físico (COM CACHE)
+        # Gera Hash da topologia candidata
+        cfg_hash = hash(γ_trial)
+        obj_trial = 0.0
+
+        if haskey(solution_cache, cfg_hash)
+            # Se já calculamos essa topologia antes, recuperamos o valor
+            obj_trial = solution_cache[cfg_hash]
+            println("    -> Usando o cache!") 
+        else
+            # Se não, calculamos o FEM (custoso)
+            MP_t, _, _, _ = Sweep(nn, ne, coord, connect, γ_trial, fρ, fκ, μ, freqs, livres, vels, press)
+            obj_trial = Objetivo(MP_t, nodes_target, vA)
+            
+            # Armazena no cache para o futuro
+            solution_cache[cfg_hash] = obj_trial
+        end
+
         act_red = obj_curr - obj_trial
 
         # Correção de Monotonicidade
@@ -97,10 +117,12 @@ function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_cur
             n_reject += 1
         else
             step_accepted = true
-            γ_final .= γ_trial # AQUI sim atualizamos a topologia
+            γ_final .= γ_trial 
             
-            if R > 0.7; cv = min(0.5, cv * 1.2)
-            elseif R < 0.3; cv = max(cv_min, cv * 0.5)
+            if R > 0.7
+                cv = min(0.5, cv * 1.2)
+            elseif R < 0.3
+                cv = max(cv_min, cv * 0.5)
             end
         end
 

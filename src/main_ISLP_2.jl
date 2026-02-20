@@ -1,10 +1,9 @@
-
 """
  Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
 """
 function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
 
-    # --- 1. SETUP INICIAL ---
+    # --- SETUP INICIAL ---
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
     arquivo_pos, arquivo_pos_freq, arquivo_data_opt, arquivo_γ_ini, arquivo_γ_fin = arquivos_saida
 
@@ -120,6 +119,9 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     cv_current = fatorcv 
     stagnation_counter = 0
 
+    # Inicializa o cache de soluções (Hash -> SPL) para evitar recálculos do FEM
+    solution_cache = Dict{UInt64, Float64}()
+
     # Loop externo 
     for iter = 1:niter
         
@@ -127,7 +129,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         γ_start = copy(γ)
 
         # Atualiza Heurísticas (Warmup / Stagnation)
-        cv_current = Update_Heuristics(iter, stagnation_counter, cv_current, nvp)
+        cv_current = Update_Heuristics(iter, stagnation_counter, cv_current, nvp, fatorcv)
 
         # Volume atual do projeto
         volume_atual = sum(γ[elements_design] .* V[elements_design])
@@ -144,8 +146,10 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         push!(hist.SLP, objetivo);
         push!(hist.P, perimetro)
         
-        # Exporta o campo de pressões (apenas 1a freq para economizar disco)
-        Lgmsh_export_nodal_scalar(arquivo_pos_freq, abs.(MP[:,1]), "Press $(freqs[1]) Hz - It $iter")
+        # Exporta os campos de pressão
+        for i=1:size(MP,2)
+            Lgmsh_export_nodal_scalar(arquivo_pos_freq, abs.(MP[:,i]), "Press $(freqs[i]) Hz - It $iter")
+        end
 
         # Mostra um resumo na tela, para acompanhamento
         @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e) | cv: %.4f\n", 
@@ -154,28 +158,29 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         # Calcula a derivada do objetivo
         dΦ = Derivada(ne, nn, γ, connect, coord, K, M, C, livres, freqs, pressures, fρ, fκ, dfρ, dfκ, μ, nodes_target, MP, elements_design, vA) 
 
-        # Exporta para o gmsh
-        Lgmsh_export_element_scalar(arquivo_pos, dΦ, "dΦ")
-
+      
         # Se o filtro estiver ativado, filtramos e usamos a sensibilidade filtrada
         if raio_filtro > 0 
             dΦ_filt = Filtro(vizinhos, pesos, dΦ, elements_design)
             c = dΦ_filt[elements_design] 
+
+            # Exporta para o gmsh
+            Lgmsh_export_element_scalar(arquivo_pos, dΦ_filt, "dΦ")
         else
             c = dΦ[elements_design] 
+
+            # Exporta para o gmsh
+            Lgmsh_export_element_scalar(arquivo_pos, dΦ, "dΦ")
         end
 
-        # Linearização das restrições
         # Linearização das restrições (Volume, Perímetro, Topologia + Slacks)
         A_global, b_global = Lineariza_Restricoes(V, elements_design, Vast, volume_atual, perimetro, Past, ne, γ, neighedge, map_global_local)
 
-       
         # Empacotando dados FEM necessários para o check físico
         fem_data = (nn, ne, coord, connect, fρ, fκ, μ, freqs, livres, velocities, pressures, nodes_target, vA)
         
-
-        # Trust Region Loop (Otimização do Passo)
-        γ_new, cv_current, step_accepted = Trust_Region_Loop(c, A_global, b_global, γ, elements_design, cv_current, objetivo, Past, neighedge, fem_data)
+        # Trust Region Loop (Otimização do Passo) - Passando o solution_cache
+        γ_new, cv_current, step_accepted = Trust_Region_Loop(c, A_global, b_global, γ, elements_design, cv_current, objetivo, Past, neighedge, fem_data, solution_cache)
 
         # Verificação do passo
         if !step_accepted
@@ -219,4 +224,3 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     # Retorna o histórico para o terminal
     return hist.V, hist.SLP, hist.P
 end
-

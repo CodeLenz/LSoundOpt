@@ -74,12 +74,144 @@ function Derivada_KMC(et,γe,fρ::Function,fκ::Function,dfρ::Function,dfκ::Fu
 
 end
 
+
+
+# ===================================================================================
+# Pré-calcula as matrizes de sensibilidade elementar (INDEPENDENTES DA FREQUÊNCIA)
+# Retorna um vetor de NamedTuples com os dados prontos para uso rápido
+#
+function Precalcula_Dados_Elementos(γ, connect, coord, elements_design,
+                                    fρ, fκ, dfρ, dfκ, μ)
+    
+    # Pré-aloca o vetor de dados
+    dados_elem = Vector{NamedTuple{(:nos, :dKe, :dMe, :dCe), 
+                        Tuple{Vector{Int}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}}(undef, length(elements_design))
+    
+    # Usa threads aqui também para acelerar o setup
+    Threads.@threads for i in eachindex(elements_design)
+
+        # Recupera od dados do elemento
+        ele = elements_design[i]
+        etype = connect[ele, 1]
+        
+        # Recupera nós e coordenadas (operação de I/O na malha)
+        nos, X = LSound.Nos_Coordenadas(ele, etype, coord, connect)
+        
+        # Variável de projeto
+        γe = γ[ele]
+        
+        # Calcula as matrizes (operação pesada de geometria)
+        dKe, dMe, dCe = Derivada_KMC(etype, γe, fρ, fκ, dfρ, dfκ, μ, X)
+        
+        # Armazena
+        dados_elem[i] = (nos=nos, dKe=dKe, dMe=dMe, dCe=dCe)
+
+    end
+    
+    return dados_elem
+end
+
+
+function Derivada(ne, nn, γ::Vector{T0}, connect::Matrix{T1}, coord::Matrix{T0},
+                  K::AbstractMatrix{T0}, M::AbstractMatrix{T0}, C::AbstractMatrix{T0},
+                  livres::Vector{T1}, freqs::Vector{T0},
+                  pressures::Vector, 
+                  fρ::Function, fκ::Function,
+                  dfρ::Function, dfκ::Function, μ::T0,
+                  nodes_target::Vector{T1}, MP::Matrix{T2},
+                  elements_design::Vector, A::Vector, p0=20E-6) where {T0, T1, T2}
+
+    # 1. SETUP PRÉ-LOOP (Memória e Geometria)
+    dados_elementos = Precalcula_Dados_Elementos(γ, connect, coord, elements_design, fρ, fκ, dfρ, dfκ, μ)
+
+    d = zeros(ne)
+    Nf = length(freqs)
+    nt = length(nodes_target)
+    const_log = 10.0 / log(10.0)
+
+    # -----------------------------------------------------------
+    # OTIMIZAÇÃO DE MATRIZES: Fatiamento fora do loop (HOISTING)
+    # -----------------------------------------------------------
+    # Isso evita alocar memória e buscar índices milhares de vezes
+    K_livre = K[livres, livres]
+    M_livre = M[livres, livres]
+    C_livre = C[livres, livres]
+    
+    # Alocações auxiliares
+    λn = zeros(ComplexF64, nn)
+    Fn = zeros(ComplexF64, nn)
+
+    # Loop pelas frequências
+    for (coluna, f) in enumerate(freqs)
+        
+        ωn = 2 * pi * f
+        An = A[coluna]
+        P = @view MP[:, coluna] 
+
+        # -----------------------------------------------------------
+        # MONTAGEM RÁPIDA
+        # -----------------------------------------------------------
+        # Agora usamos as submatrizes já cortadas.
+        # A operação abaixo é rápida pois K_livre, etc, já são CSC compactos.
+        Kd = K_livre .+ (im * ωn) .* C_livre .- (ωn^2) .* M_livre
+
+        # Lado direito adjunto
+        fill!(Fn, 0.0) 
+        for p in nodes_target
+            Fn[p] += -conj(P[p])
+        end
+
+        # Escalonamento
+        P2 = sum(abs2, P[nodes_target]) 
+        P2avg = P2 / nt
+        scale_factor = An * const_log / (nt * P2avg)
+        Fn[nodes_target] .*= scale_factor
+        
+        # Solver Linear
+        λn[livres] .= Kd \ Fn[livres]
+
+        # LOOP DE SENSIBILIDADE (Paralelizado)
+        d_temp = zeros(Float64, length(elements_design))
+        
+        Threads.@threads for i in eachindex(elements_design)
+
+
+            data = dados_elementos[i]
+            pe = @view P[data.nos]
+            λe = @view λn[data.nos]
+            
+            # Produto interno otimizado (dot)
+            # Sens = 2 * Real( λ^T * dKde * P )
+            
+            # Rigidez
+            val = dot(conj(λe), data.dKe, pe) 
+
+            # Amortecimento
+            val += (im * ωn) * dot(conj(λe), data.dCe, pe)
+
+            # Massa
+            val -= (ωn^2) * dot(conj(λe), data.dMe, pe)
+            
+            d_temp[i] += 2 * real(val)
+        end
+        
+        # Acumula
+        for i in 1:length(elements_design)
+            ele = elements_design[i]
+            d[ele] += d_temp[i]
+        end
+
+    end # Fim Loop Frequência
+
+    return d ./ Nf
+end
+
 # ===================================================================================
 # Calcula a derivada da função objetivo
 #
-# Média simples do SPL em cada frequência
+# Média simples do SPL em cada frequência ---ver o NF aqui
 #
-function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
+function Derivada_OLD(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
                   K::AbstractMatrix{T0},M::AbstractMatrix{T0},C::AbstractMatrix{T0},
                   livres::Vector{T1},freqs::Vector{T0},
                   pressures::Vector, 
@@ -190,52 +322,4 @@ function Derivada(ne,nn,γ::Vector{T0},connect::Matrix{T1},coord::Matrix{T0},
     # frequências
     return d./Nf
          
-end
-
-# ===================================================================================
-# Derivada de Fn [dFn/dγm]
-#
-# "Forças" devido a pressões impostas para um elemento com 
-#  vetor de nós = nos
-#
-# dKde já é a derivada da matriz Kd do elemento em relação a sua 
-# variável de projeto γ_m
-#
-function Derivada_forca_pressao(nos::Vector,pressures::Vector,dKde::AbstractMatrix)
-
-     # Aloca o vetor de saída
-     # com a dimensão do número de nós do elemento
-     dF = zeros(ComplexF64,length(nos))
-
-     # Loop pelas entradas de pressures
-     for p in pressures
-       
-        # Recupera o valor da pressão 
-        png = p["value"] 
-  
-        # Recupera os nós 
-        nodes_p = p["nodes"]
-  
-        # Loop pelos nós, calculando a contribuição 
-        # da pressão no vetor de forças 
-        for node in nodes_p
-
-            # Precisamos verificar se o nó no qual a pressão está sendo aplicada
-            # existe no elemento e, caso verdadeiro, utilizar a coluna da matriz LOCAL
-            # correspondente
-            pos = findfirst(x->x==node,nos)
-
-            # Se existir uma posição correspondente, podemos
-            # calcular a derivada
-            if !isnothing(pos)
-                dF .-= dKde[:,pos]*png
-            end 
- 
-        end # node
-  
-    end # p 
- 
-    # Retorna o vetor da derivada das forças devido à pressão imposta
-    return dF
-
 end

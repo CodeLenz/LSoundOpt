@@ -30,8 +30,7 @@ function Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressur
         # Recorta vetor de forças
         P_red .= P[livres]
     
-        # 4. Soluciona o sistema reduzido
-        # O Julia escolhe automaticamente UMFPACK para matrizes esparsas complexas
+        # Soluciona o sistema reduzido
         U_red = Kd_red \ P_red
 
         # Reconstrói o vetor global U
