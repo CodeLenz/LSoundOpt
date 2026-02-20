@@ -18,7 +18,8 @@ function Setup_Arquivos(arquivo)
     end
     
     # Gera os arquivos de saída com os seus nomes
-    nomebase = basename(mshfile)
+    #nomebase = basename(mshfile)
+    nomebase = mshfile
     saidas = (
         replace(nomebase, ".msh"=>".pos"),
         replace(nomebase, ".msh"=>"_freq.pos"),
