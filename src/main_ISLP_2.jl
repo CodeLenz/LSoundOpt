@@ -45,7 +45,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     γ = zeros(ne)
     Fix_γ!(γ, elements_fixed, values_fixed)
 
-    # Grava deistribuição inicial para um arquivo
+    # Grava distribuição inicial para um arquivo
     writedlm(arquivo_γ_ini, γ)
 
     # Identifica graus de liberdade livres
