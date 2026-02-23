@@ -86,7 +86,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     for i=1:nf
 
       # Calcula o valor e armazena
-      FRF_SLPn_inicial[i] = SPLn(MP[:,i],20E-6)
+      FRF_SLPn_inicial[i] = SPLn(MP[nodes_target,i],20E-6)
 
     end
 
@@ -102,7 +102,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     # Calcula o SLPn em cada uma das frequências 
     for i=1:nf
 
-      FRF_SLPn_final[i] = SPLn(MP[:,i],20E-6)
+      FRF_SLPn_final[i] = SPLn(MP[nodes_target,i],20E-6)
 
     end
 
