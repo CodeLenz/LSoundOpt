@@ -165,12 +165,12 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
             c = dΦ_filt[elements_design] 
 
             # Exporta para o gmsh
-            Lgmsh_export_element_scalar(arquivo_pos, dΦ_filt, "dΦ")
+            #Lgmsh_export_element_scalar(arquivo_pos, dΦ_filt, "dΦ")
         else
             c = dΦ[elements_design] 
 
             # Exporta para o gmsh
-            Lgmsh_export_element_scalar(arquivo_pos, dΦ, "dΦ")
+            #Lgmsh_export_element_scalar(arquivo_pos, dΦ, "dΦ")
         end
 
         # Linearização das restrições (Volume, Perímetro, Topologia + Slacks)
