@@ -3,20 +3,20 @@
 // =============================================================================
 Delete All;
 
-//lc = 0.005;
 lc = 0.01;
 
 // Dimensões Y (Altura)
 H_tube   = 0.10; 
-H_cavity = 0.20; 
+H_cavity = 0.20;
 
 // Dimensões Z (Profundidade) - Seção Quadrada/Cúbica
 Z_tube   = 0.10; // Tubo quadrado (0.10 x 0.10)
-Z_cavity = 0.20; // Câmara em caixa envolvendo o tubo
+Z_cavity = 0.20;
 
+// Câmara em caixa envolvendo o tubo
 // Dimensões X (Comprimento)
 L_in      = 0.4;  
-L_chamber = 0.6;  
+L_chamber = 0.6;
 L_gap     = 0.2;  
 L_end     = 0.2;  
 
@@ -154,25 +154,47 @@ e_top_cc = Extrude {0, H_cavity, 0} { Surface{e_mid_cc[0]}; Layers{n_y_cav}; Rec
 e_top_cf = Extrude {0, H_cavity, 0} { Surface{e_mid_cf[0]}; Layers{n_y_cav}; Recombine; };
 
 // =============================================================================
-// 3. GRUPOS FÍSICOS (Compatibilidade direta com Parsemsh_Daniele)
+// 3. COERÊNCIA E GRUPOS FÍSICOS (Imunes a deleção de IDs)
 // =============================================================================
 
+// Forçar a fusão topológica de faces coincidentes ANTES de criar os grupos
+Coherence; 
+
+// Volumes separados corretamente para evitar sobreposição na matriz de rigidez
 Physical Volume("Material,Ar,1,1.21,343.0,0.0") = {
     e_bot_cb[1], e_bot_cc[1], e_bot_cf[1],
-    e_mid_in[1], e_mid_cb[1], e_mid_cc[1], e_mid_cf[1], e_mid_o1[1], e_mid_o2[1],
+    e_mid_cb[1], e_mid_cf[1], 
     e_top_cb[1], e_top_cc[1], e_top_cf[1]
 };
 
-// Domínio não-design perfeitamente mapeado (volumes do caminho central)
 Physical Volume("Fixed,0.0") = {
     e_mid_in[1], e_mid_cc[1], e_mid_o1[1], e_mid_o2[1]
 };
 
-// Superfícies recuperadas através do mapeamento determinístico do Gmsh
-Physical Surface("Vn,1E-3,0.0,0.0")      = {e_mid_in[5]}; // Inlet (X=0)
-Physical Surface("Pressure,0.0,0.0,0.0") = {e_mid_o2[3]}; // Outlet 2 (X=L_total)
-Physical Surface("Target")               = {e_mid_o1[3]}; // Outlet 1 / Gap Interface
+// Tolerância para o BoundingBox
+eps = 1e-4;
 
+// Inlet (X=X0)
+Physical Surface("Vn,1E-3,0.0,0.0") = Surface In BoundingBox{
+    X0-eps, Y_base-eps, Z1-eps, 
+    X0+eps, Y_base+H_tube+eps, Z2+eps
+};
+
+// Target / Outlet 1 / Gap Interface (X=X3)
+Physical Surface("Target") = Surface In BoundingBox{
+    X3-eps, Y_base-eps, Z1-eps, 
+    X3+eps, Y_base+H_tube+eps, Z2+eps
+};
+
+// Outlet 2 (X=X4)
+Physical Surface("Open") = Surface In BoundingBox{
+    X4-eps, Y_base-eps, Z1-eps, 
+    X4+eps, Y_base+H_tube+eps, Z2+eps
+};
+
+// =============================================================================
+// 4. GERAÇÃO E EXPORTAÇÃO
+// =============================================================================
 Mesh.Algorithm = 8;
 Mesh 3;
 Save "muffler3D.msh";
