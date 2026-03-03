@@ -13,7 +13,7 @@ for key, data in mesh.point_data.items():
 for key, data_list in mesh.cell_data.items():
     mesh.cell_data[key] = [d.astype(np.float64) for d in data_list]
 
-# 4. Salva no formato VTU (Ideal para o ParaView)
+# 4. Salva no formato VTU 
 meshio.write("resultado_final.vtu", mesh)
 
-print("Conversão para VTU (Float64) concluída!")
+print("Conversão para VTU concluída!")
