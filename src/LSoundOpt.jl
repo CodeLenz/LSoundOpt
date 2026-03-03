@@ -87,9 +87,6 @@ module LSoundOpt
    # Arquivo principal 
    include("main_ISLP_2.jl")
 
-
-
-
    # Exporta a rotina principal 
    export Otim_ISLP
 

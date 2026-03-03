@@ -1,4 +1,4 @@
-function Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures::Vector)
+function Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures::Vector,MP::Matrix)
 
     # 1. Monta globais (Custo único)
     K,M,C = Monta_KMC_param(ne,coord,connect,γ,fρ,fκ,μ)
@@ -11,9 +11,9 @@ function Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressur
 
     nf = length(freqs)
     U = zeros(ComplexF64,nn)
-    MP = zeros(ComplexF64,nn,nf)
     P = zeros(ComplexF64,nn)    
     P_red = zeros(ComplexF64, length(livres)) 
+    U_red = zeros(ComplexF64, length(livres)) 
 
     contador = 1
     for f in freqs
@@ -31,7 +31,7 @@ function Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressur
         P_red .= P[livres]
     
         # Soluciona o sistema reduzido
-        U_red = Kd_red \ P_red
+        U_red .= Kd_red \ P_red
 
         # Reconstrói o vetor global U
         U[livres] .= U_red
@@ -42,5 +42,5 @@ function Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressur
         
     end
 
-    return MP, K, M, C
+    return K, M, C
 end

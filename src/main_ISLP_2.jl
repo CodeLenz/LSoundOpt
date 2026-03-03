@@ -57,8 +57,11 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     Lgmsh_export_init(arquivo_pos_freq, nn, ne, coord, connect[:,1], connect[:,3:end])
     Lgmsh_export_element_scalar(arquivo_pos, γ, "Iter 0")
    
+    # Aloca MP fora do loop para podermos reaproveitar nos Sweeps
+    MP = zeros(ComplexF64,nn,nf)
+
     # Sweep Inicial
-    MP, _, _, _ = Sweep(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures)
+    Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP)
     for i=1:nf
         Lgmsh_export_nodal_scalar(arquivo_pos_freq, abs.(MP[:,i]), "Pressure $(freqs[i]) Hz - Ini")
     end
@@ -71,7 +74,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
        γ = rand(ne) 
 
        # Sweep 
-       MP,K,M,C = Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures)
+       K,M,C = Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures, MP)
 
        # Calcula as derivadas analíticas
        dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ, fκ,dfρ,dfκ,μ, nodes_target,MP,elements_design,vA) 
@@ -135,7 +138,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         volume_atual = sum(γ[elements_design] .* V[elements_design])
 
         # Sweep 
-        MP, K, M, C = Sweep(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures)
+        K, M, C = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP)
 
         # Objetivo e perímetro 
         objetivo = Objetivo(MP, nodes_target, vA)
@@ -147,7 +150,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         push!(hist.P, perimetro)
         
         # Exporta os campos de pressão
-        for i=1:size(MP,2)
+        for i=1:nf
             Lgmsh_export_nodal_scalar(arquivo_pos_freq, abs.(MP[:,i]), "Press $(freqs[i]) Hz - It $iter")
         end
 

@@ -72,14 +72,17 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     
     # Posições que não precisam ser calculadas no sistema de equações 
     livres = setdiff(collect(1:nn),nodes_mask)
-   
-    # Sweep na topologia inicial, para comparação com a otimizada
-    MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures)
 
     # Número de frequências
     nf = length(freqs)
 
-    # Cria um vetor para armazenar o SPLn em cada frequência considerada na otimização
+    # Aloca MP fora do loop para podermos reaproveitar nos Sweeps
+    MP = zeros(ComplexF64,nn,nf)
+
+    # Sweep na topologia inicial, para comparação com a otimizada
+    Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures,MP)
+
+       # Cria um vetor para armazenar o SPLn em cada frequência considerada na otimização
     FRF_SLPn_inicial = zeros(length(freqs))
    
     # Processa o SPLn por frequência
@@ -97,7 +100,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     γ_opt = vec(readdlm(arquivo_γ_fin))  
     
     # Roda o sweep na topologia otimizada e exporta para visualização 
-    MP,_ =  Sweep(nn,ne,coord,connect,γ_opt,fρ,fκ,μ,freqs,livres,velocities,pressures)
+    Sweep!(nn,ne,coord,connect,γ_opt,fρ,fκ,μ,freqs,livres,velocities,pressures,MP)
     
     # Calcula o SLPn em cada uma das frequências 
     for i=1:nf
