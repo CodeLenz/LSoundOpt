@@ -1,7 +1,7 @@
 #
 # Trust-Region (Com Cache de Soluções)
 #
-function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_curr, Past, neighedge, fem_data, solution_cache)
+function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_curr, Past, neighedge, fem_data, solution_cache,MP)
     
     # Desempacota os dados
     nn, ne, coord, connect, fρ, fκ, μ, freqs, livres, vels, press, nodes_target, vA = fem_data
@@ -92,8 +92,8 @@ function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_cur
             println("    -> Usando o cache!") 
         else
             # Se não, calculamos o FEM (custoso)
-            MP_t, _, _, _ = Sweep(nn, ne, coord, connect, γ_trial, fρ, fκ, μ, freqs, livres, vels, press)
-            obj_trial = Objetivo(MP_t, nodes_target, vA)
+            Sweep!(nn, ne, coord, connect, γ_trial, fρ, fκ, μ, freqs, livres, vels, press,MP)
+            obj_trial = Objetivo(MP, nodes_target, vA)
             
             # Armazena no cache para o futuro
             solution_cache[cfg_hash] = obj_trial

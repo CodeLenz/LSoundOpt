@@ -51,14 +51,8 @@ module LSoundOpt
    # Calcula a função objetivo SPL
    include("objetivo.jl")
 
-   # Norma P
-   # include("objetivoP.jl")
-
    # Calcula a derivada da função objetivo SPL
    include("sensibilidade.jl")
-
-   # Calcula a derivada da função objetivo norma P
-   # include("sensibilidadeP.jl")
 
    # Calcula o perímetro e seu gradiente
    include("perimiter.jl")

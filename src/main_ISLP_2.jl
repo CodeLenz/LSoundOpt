@@ -183,7 +183,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         fem_data = (nn, ne, coord, connect, fρ, fκ, μ, freqs, livres, velocities, pressures, nodes_target, vA)
         
         # Trust Region Loop (Otimização do Passo) - Passando o solution_cache
-        γ_new, cv_current, step_accepted = Trust_Region_Loop(c, A_global, b_global, γ, elements_design, cv_current, objetivo, Past, neighedge, fem_data, solution_cache)
+        γ_new, cv_current, step_accepted = Trust_Region_Loop(c, A_global, b_global, γ, elements_design, cv_current, objetivo, Past, neighedge, fem_data, solution_cache, MP)
 
         # Verificação do passo
         if !step_accepted
