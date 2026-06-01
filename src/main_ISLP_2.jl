@@ -3,7 +3,7 @@
 """
 function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
 
-    # --- SETUP INICIAL ---
+    # SETUP INICIAL
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
     arquivo_pos, arquivo_pos_freq, arquivo_data_opt, arquivo_γ_ini, arquivo_γ_fin = arquivos_saida
 

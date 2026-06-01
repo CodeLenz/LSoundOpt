@@ -6,7 +6,10 @@ function Verifica_derivada(γ,nn,ne,coord,connect,fρ,fκ,μ,freqs,livres,veloci
     # Vamos validar a derivada usando diferenças finitas
     function f_(γ,nn,ne,coord,connect,fρ,fκ,μ, freqs,livres,velocities,pressures,nodes_target,A)
 
-        MP,_ =  Sweep(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures) 
+        # Aloca a matriz MP
+        MP = zeros(ComplexF64, nn, length(freqs))
+
+        Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures,MP) 
 
         # Calcula a função objetivo SPL_w
         objetivo = Objetivo(MP,nodes_target,A)

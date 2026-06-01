@@ -20,6 +20,7 @@ module LSoundOpt
    # Pacotes de otimização
    using JuMP
    using HiGHS
+   using NLopt
 
    # Inclui os arquivos do pacote
 
@@ -81,7 +82,11 @@ module LSoundOpt
    # Arquivo principal 
    include("main_ISLP_2.jl")
 
+   # Arquivos para o SIMP
+   include("param_simp.jl")
+   include("main_SIMP.jl")
+
    # Exporta a rotina principal 
-   export Otim_ISLP
+   export Otim_ISLP, Otim_SIMP
 
 end
