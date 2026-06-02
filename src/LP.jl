@@ -16,7 +16,6 @@ function LP(c, A, b, γ_design)
     # -----------------------------------------------------------
     # SOLVER SETUP
     # O problema é um MILP (Mixed-Integer Linear Programming).
-    # Não é necessário usar Alpine. O HiGHS é excelente para isso.
     # -----------------------------------------------------------
     model = Model(optimizer_with_attributes(HiGHS.Optimizer, 
                   "output_flag" => false, 
@@ -70,7 +69,7 @@ function LP(c, A, b, γ_design)
     # optimize!(model)
     # Redireciona stdout para evitar poluição no terminal se o solver for verboso
     # redirect_stdout((()->optimize!(model)), open(devnull, "w"))
-    optimize!(model)
+    JuMP.optimize!(model)
 
     status = termination_status(model)
 
@@ -153,7 +152,7 @@ function LP_anterior(c, A, b, γ)
 
    # Resolve o problema 
    #optimize!(model)
-   redirect_stdout((()->optimize!(model)),open("nul", "w"))
+   redirect_stdout((()->JuMP.optimize!(model)),open("nul", "w"))
 
    # Valor do objetivo
    # objective_value(model)

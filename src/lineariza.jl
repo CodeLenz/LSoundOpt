@@ -1,24 +1,30 @@
 #
 # Lineariza restrições
 #
-function Lineariza_Restricoes(V, elements_design, Vast, volume_atual, perimetro_atual, Past, ne, γ, neighedge, map_global_local)
+function Lineariza_Restricoes(V, elements_design, Vast, volume_atual, perimetro_atual, Past, ne, γ, neighedge, map_global_local;
+                              restricao_volume=true)
     
     nvp = length(elements_design)
     
-    # Restrições Globais (Volume)
-    ΔV = Vast - volume_atual
-    b_list = [ΔV]
+    # Restrições globais opcionais (Volume/Perímetro).
+    A_list = Matrix{Float64}(undef, 0, 2*nvp)
+    b_list = Float64[]
     
-    # A matriz de volume precisa de zeros para as variáveis de folga
-    # Estrutura: [Grad_Vol (1xNVP) | Zeros (1xNVP)]
-    A_vol = vcat(V[elements_design]')
-    A_vol_ext = hcat(A_vol, zeros(1, nvp)) 
-    A_list = A_vol_ext
+    if restricao_volume
+        ΔV = Vast - volume_atual
+        push!(b_list, ΔV)
+        
+        # A matriz de volume precisa de zeros para as variáveis de folga
+        # Estrutura: [Grad_Vol (1xNVP) | Zeros (1xNVP)]
+        A_vol = vcat(V[elements_design]')
+        A_vol_ext = hcat(A_vol, zeros(1, nvp)) 
+        A_list = vcat(A_list, A_vol_ext)
+    end
 
     # Restrição de Perímetro (se ativo)
     if perimetro_atual > 0 && Past > 0
         ΔP = Past - perimetro_atual
-        b_list = vcat(b_list, ΔP)
+        push!(b_list, ΔP)
         
         dP = dPerimiter(ne, γ, neighedge, elements_design)
         A_per = transpose(dP[elements_design])

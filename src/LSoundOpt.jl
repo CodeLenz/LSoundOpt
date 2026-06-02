@@ -52,6 +52,9 @@ module LSoundOpt
    # Calcula a função objetivo SPL
    include("objetivo.jl")
 
+   # Tipo/cache das fatorações da matriz dinâmica reduzida
+   include("fatoracao_kd.jl")
+
    # Calcula a derivada da função objetivo SPL
    include("sensibilidade.jl")
 

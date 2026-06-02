@@ -1,7 +1,8 @@
 """
     Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
               p_inicial=1.0, p_final=4.0, p_passo=0.5,
-              verifica_derivada=false)
+              verifica_derivada=false,
+              restricao_volume=true)
 
 Versão SIMP (contínua, via MMA/NLopt) do otimizador acústico reativo.
 
@@ -27,7 +28,8 @@ o resultado preto-e-branco da formulação binária.
 """
 function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                    p_inicial=1.0, p_final=4.0, p_passo=0.5,
-                   verifica_derivada=false)
+                   verifica_derivada=false,
+                   restricao_volume=true)
 
     # --- SETUP INICIAL (idêntico a Otim_ISLP) ---
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
@@ -71,7 +73,7 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     # (Mantida pequena para não enviesar a topologia final.)
     println("Inicializando topologia (SIMP, γ0 = vf + perturbação)...")
     γ = zeros(ne)
-    γ[elements_design] .= vf .+ 0.05 .* (rand(nvp) .- 0.5)
+    # γ[elements_design] .= vf #.+ 0.05 .* (rand(nvp) .- 0.5)
     clamp!(γ, 0.0, 1.0)
     Fix_γ!(γ, elements_fixed, values_fixed)
     writedlm(arquivo_γ_ini, γ)
@@ -87,6 +89,7 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
 
     # Matriz de resposta (reuso entre sweeps)
     MP = zeros(ComplexF64, nn, nf)
+    Kd_factors = Cria_Cache_Kd(nf)
 
     # Sweep inicial
     Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP)
@@ -98,8 +101,8 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     if verifica_derivada
         println("--- Modo de Verificação de Derivada (SIMP, p=$(p_inicial)) ---")
         γ = rand(ne)
-        K, M, C = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP)
-        dΦ = Derivada(ne, nn, γ, connect, coord, K, M, C, livres, freqs, pressures, fρ, fκ, dfρ, dfκ, μ, nodes_target, MP, elements_design, vA)
+        K, M, C = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP, Kd_factors)
+        dΦ = Derivada(ne, nn, γ, connect, coord, K, M, C, livres, freqs, pressures, fρ, fκ, dfρ, dfκ, μ, nodes_target, MP, elements_design, vA; Kd_factors=Kd_factors)
         dnum = Verifica_derivada(γ, nn, ne, coord, connect, fρ, fκ, μ, freqs, livres, velocities, pressures, nodes_target, elements_design, vA)
         rel = (dΦ .- dnum) ./ (dnum .+ 1e-12)
         Lgmsh_export_element_scalar(arquivo_pos, γ, "γ_debug")
@@ -116,6 +119,7 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     # Volumes elementares e volume-limite
     V = Volumes(ne, connect, coord)
     Vast = vf * sum(V[elements_design])
+    restricao_volume || println("Rodando SIMP sem restrição de volume; apenas os bounds 0 <= γ <= 1 serão impostos.")
 
     # Históricos
     hist = (V = Float64[], SLP = Float64[], P = Float64[])
@@ -139,7 +143,8 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
 
             # Resposta harmônica
             K, M, C = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ,
-                             freqs, livres, velocities, pressures, MP)
+                             freqs, livres, velocities, pressures, MP,
+                             Kd_factors)
 
             # Objetivo
             Φ = Objetivo(MP, nodes_target, vA)
@@ -148,7 +153,8 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
             if length(grad) > 0
                 dΦ = Derivada(ne, nn, γ, connect, coord, K, M, C, livres,
                               freqs, pressures, fρ, fκ, dfρ, dfκ, μ,
-                              nodes_target, MP, elements_design, vA)
+                              nodes_target, MP, elements_design, vA;
+                              Kd_factors=Kd_factors)
                 if raio_filtro > 0
                     dΦ = Filtro(vizinhos, pesos, dΦ, elements_design)
                 end
@@ -160,8 +166,13 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
             perim = Perimiter(γ, neighedge, elements_design)
             volat = sum(x .* Vd)
             push!(hist.V, volat); push!(hist.SLP, Φ); push!(hist.P, perim)
-            @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e)\n",
-                    iter_global[], Φ, perim, volat, Vast)
+            if restricao_volume
+                @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e)\n",
+                        iter_global[], Φ, perim, volat, Vast)
+            else
+                @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (sem restr.)\n",
+                        iter_global[], Φ, perim, volat)
+            end
 
             return Φ
         end
@@ -204,7 +215,11 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
         opt.ftol_rel = 1e-6
         opt.xtol_rel = 0.0          # desliga o critério de passo
         opt.min_objective = objetivo_mma!
-        NLopt.inequality_constraint!(opt, restricao_volume!, 1e-8)
+        if restricao_volume
+            NLopt.inequality_constraint!(opt, restricao_volume!, 1e-8)
+        else
+            println("  -> Restrição de volume desligada neste estágio.")
+        end
 
         # Otimiza este estágio (warm-start a partir do x corrente)
         (minf, xopt, ret) = NLopt.optimize(opt, x)

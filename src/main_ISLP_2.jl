@@ -1,7 +1,9 @@
 """
- Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
+ Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false,
+           restricao_volume=true)
 """
-function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false)
+function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada=false,
+                   restricao_volume=true)
 
     # SETUP INICIAL
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
@@ -59,6 +61,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
    
     # Aloca MP fora do loop para podermos reaproveitar nos Sweeps
     MP = zeros(ComplexF64,nn,nf)
+    Kd_factors = Cria_Cache_Kd(nf)
 
     # Sweep Inicial
     Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP)
@@ -74,10 +77,10 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
        γ = rand(ne) 
 
        # Sweep 
-       K,M,C = Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures, MP)
+       K,M,C = Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ, freqs,livres,velocities,pressures, MP, Kd_factors)
 
        # Calcula as derivadas analíticas
-       dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ, fκ,dfρ,dfκ,μ, nodes_target,MP,elements_design,vA) 
+       dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ, fκ,dfρ,dfκ,μ, nodes_target,MP,elements_design,vA; Kd_factors=Kd_factors) 
 
        # Calcula as derivadas numéricas
        dnum = Verifica_derivada(γ,nn,ne,coord,connect,fρ,fκ,μ,freqs,livres,velocities,pressures,nodes_target,elements_design,vA)
@@ -114,6 +117,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
 
     # Volume limite (restrição de volume)
     Vast = vf * sum(V[elements_design])
+    restricao_volume || println("Rodando ISLP sem restrição de volume; o volume será apenas monitorado.")
 
     # Históricos
     hist = (V = Float64[], SLP = Float64[], P = Float64[])
@@ -138,7 +142,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         volume_atual = sum(γ[elements_design] .* V[elements_design])
 
         # Sweep 
-        K, M, C = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP)
+        K, M, C = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP, Kd_factors)
 
         # Objetivo e perímetro 
         objetivo = Objetivo(MP, nodes_target, vA)
@@ -155,11 +159,16 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         end
 
         # Mostra um resumo na tela, para acompanhamento
-        @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e) | cv: %.4f\n", 
-                iter, objetivo, perimetro, volume_atual, Vast, cv_current)
+        if restricao_volume
+            @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e) | cv: %.4f\n", 
+                    iter, objetivo, perimetro, volume_atual, Vast, cv_current)
+        else
+            @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (sem restr.) | cv: %.4f\n", 
+                    iter, objetivo, perimetro, volume_atual, cv_current)
+        end
 
         # Calcula a derivada do objetivo
-        dΦ = Derivada(ne, nn, γ, connect, coord, K, M, C, livres, freqs, pressures, fρ, fκ, dfρ, dfκ, μ, nodes_target, MP, elements_design, vA) 
+        dΦ = Derivada(ne, nn, γ, connect, coord, K, M, C, livres, freqs, pressures, fρ, fκ, dfρ, dfκ, μ, nodes_target, MP, elements_design, vA; Kd_factors=Kd_factors) 
 
       
         # Se o filtro estiver ativado, filtramos e usamos a sensibilidade filtrada
@@ -177,7 +186,8 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         end
 
         # Linearização das restrições (Volume, Perímetro, Topologia + Slacks)
-        A_global, b_global = Lineariza_Restricoes(V, elements_design, Vast, volume_atual, perimetro, Past, ne, γ, neighedge, map_global_local)
+        A_global, b_global = Lineariza_Restricoes(V, elements_design, Vast, volume_atual, perimetro, Past, ne, γ, neighedge, map_global_local;
+                                                  restricao_volume=restricao_volume)
 
         # Empacotando dados FEM necessários para o check físico
         fem_data = (nn, ne, coord, connect, fρ, fκ, μ, freqs, livres, velocities, pressures, nodes_target, vA)

@@ -1,4 +1,4 @@
-function Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures::Vector,MP::Matrix)
+function Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressures::Vector,MP::Matrix,Kd_factors::Union{Nothing,Vector{KdFactor}}=nothing)
 
     # 1. Monta globais (Custo único)
     K,M,C = Monta_KMC_param(ne,coord,connect,γ,fρ,fκ,μ)
@@ -10,6 +10,10 @@ function Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressu
     C_red = C[livres, livres]
 
     nf = length(freqs)
+    if Kd_factors !== nothing
+        resize!(Kd_factors, nf)
+    end
+
     U = zeros(ComplexF64,nn)
     P = zeros(ComplexF64,nn)    
     P_red = zeros(ComplexF64, length(livres)) 
@@ -30,10 +34,16 @@ function Sweep!(nn,ne,coord,connect,γ,fρ,fκ,μ,freqs,livres,velocities,pressu
         # Recorta vetor de forças
         P_red .= P[livres]
     
-        # Soluciona o sistema reduzido
-        U_red .= Kd_red \ P_red
+        # Soluciona o sistema reduzido e, se solicitado, guarda a fatoracao
+        # para reuso no adjunto da mesma frequencia.
+        Kd_factor = lu(Kd_red)
+        U_red .= Kd_factor \ P_red
+        if Kd_factors !== nothing
+            Kd_factors[contador] = Kd_factor
+        end
 
         # Reconstrói o vetor global U
+        fill!(U, 0.0)
         U[livres] .= U_red
 
         # Armazena na matriz de resposta

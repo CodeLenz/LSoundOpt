@@ -119,7 +119,8 @@ function Derivada(ne, nn, γ::Vector{T0}, connect::Matrix{T1}, coord::Matrix{T0}
                   fρ::Function, fκ::Function,
                   dfρ::Function, dfκ::Function, μ::T0,
                   nodes_target::Vector{T1}, MP::Matrix{T2},
-                  elements_design::Vector, A::Vector, p0=20E-6) where {T0, T1, T2}
+                  elements_design::Vector, A::Vector, p0=20E-6;
+                  Kd_factors::Union{Nothing,Vector{KdFactor}}=nothing) where {T0, T1, T2}
 
     # 1. SETUP PRÉ-LOOP (Memória e Geometria)
     dados_elementos = Precalcula_Dados_Elementos(γ, connect, coord, elements_design, fρ, fκ, dfρ, dfκ, μ)
@@ -129,13 +130,15 @@ function Derivada(ne, nn, γ::Vector{T0}, connect::Matrix{T1}, coord::Matrix{T0}
     nt = length(nodes_target)
     const_log = 10.0 / log(10.0)
 
-    # -----------------------------------------------------------
-    # OTIMIZAÇÃO DE MATRIZES: Fatiamento fora do loop (HOISTING)
-    # -----------------------------------------------------------
-    # Isso evita alocar memória e buscar índices milhares de vezes
-    K_livre = K[livres, livres]
-    M_livre = M[livres, livres]
-    C_livre = C[livres, livres]
+    if Kd_factors === nothing
+        # -----------------------------------------------------------
+        # OTIMIZAÇÃO DE MATRIZES: Fatiamento fora do loop (HOISTING)
+        # -----------------------------------------------------------
+        # Isso evita alocar memória e buscar índices milhares de vezes.
+        K_livre = K[livres, livres]
+        M_livre = M[livres, livres]
+        C_livre = C[livres, livres]
+    end
     
     # Alocações auxiliares
     λn = zeros(ComplexF64, nn)
@@ -148,12 +151,17 @@ function Derivada(ne, nn, γ::Vector{T0}, connect::Matrix{T1}, coord::Matrix{T0}
         An = A[coluna]
         P = @view MP[:, coluna] 
 
-        # -----------------------------------------------------------
-        # MONTAGEM RÁPIDA
-        # -----------------------------------------------------------
-        # Agora usamos as submatrizes já cortadas.
-        # A operação abaixo é rápida pois K_livre, etc, já são CSC compactos.
-        Kd = K_livre .+ (im * ωn) .* C_livre .- (ωn^2) .* M_livre
+        if Kd_factors === nothing
+            # -----------------------------------------------------------
+            # MONTAGEM RÁPIDA
+            # -----------------------------------------------------------
+            # Agora usamos as submatrizes já cortadas.
+            # A operação abaixo é rápida pois K_livre, etc, já são CSC compactos.
+            Kd = K_livre .+ (im * ωn) .* C_livre .- (ωn^2) .* M_livre
+            Kd_solver = lu(Kd)
+        else
+            Kd_solver = Kd_factors[coluna]
+        end
 
         # Lado direito adjunto
         fill!(Fn, 0.0) 
@@ -167,8 +175,8 @@ function Derivada(ne, nn, γ::Vector{T0}, connect::Matrix{T1}, coord::Matrix{T0}
         scale_factor = 0.5* An * const_log / (nt * P2avg)
         Fn[nodes_target] .*= scale_factor
         
-        # Solver Linear
-        λn[livres] .= Kd \ Fn[livres]
+        # Solver Linear: reusa a fatoracao da resposta quando fornecida.
+        λn[livres] .= Kd_solver \ Fn[livres]
 
         # LOOP DE SENSIBILIDADE (Paralelizado)
         d_temp = zeros(Float64, length(elements_design))
