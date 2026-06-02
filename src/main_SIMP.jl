@@ -2,7 +2,12 @@
     Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
               p_inicial=1.0, p_final=4.0, p_passo=0.5,
               verifica_derivada=false,
-              restricao_volume=true)
+              restricao_volume=true,
+              escala_mma=true,
+              perturbacao_inicial=0.05,
+              alvo_grad_mma=1.0,
+              escala_mma_max=1.0e8,
+              offset_obj_mma=50.0)
 
 Versão SIMP (contínua, via MMA/NLopt) do otimizador acústico reativo.
 
@@ -29,7 +34,12 @@ o resultado preto-e-branco da formulação binária.
 function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                    p_inicial=1.0, p_final=4.0, p_passo=0.5,
                    verifica_derivada=false,
-                   restricao_volume=true)
+                   restricao_volume=true,
+                   escala_mma=true,
+                   perturbacao_inicial=0.05,
+                   alvo_grad_mma=1.0,
+                   escala_mma_max=1.0e8,
+                   offset_obj_mma=50.0)
 
     # --- SETUP INICIAL (idêntico a Otim_ISLP) ---
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
@@ -73,7 +83,7 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     # (Mantida pequena para não enviesar a topologia final.)
     println("Inicializando topologia (SIMP, γ0 = vf + perturbação)...")
     γ = zeros(ne)
-    # γ[elements_design] .= vf #.+ 0.05 .* (rand(nvp) .- 0.5)
+    γ[elements_design] .= vf .+ perturbacao_inicial .* (rand(nvp) .- 0.5)
     clamp!(γ, 0.0, 1.0)
     Fix_γ!(γ, elements_fixed, values_fixed)
     writedlm(arquivo_γ_ini, γ)
@@ -92,7 +102,10 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     Kd_factors = Cria_Cache_Kd(nf)
 
     # Sweep inicial
-    Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP)
+    K_ini, M_ini, C_ini = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ,
+                                 freqs, livres, velocities, pressures, MP,
+                                 Kd_factors)
+    Φ_ini = Objetivo(MP, nodes_target, vA)
     for i = 1:nf
         Lgmsh_export_nodal_scalar(arquivo_pos_freq, abs.(MP[:, i]), "Pressure $(freqs[i]) Hz - Ini")
     end
@@ -127,7 +140,25 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     # Vetor de design reduzido (só elementos de projeto) — espaço do MMA
     x = γ[elements_design]
     Vd = V[elements_design]               # volumes dos elementos de projeto
+    escala_V_mma = escala_mma ? max(abs(Vast), eps(Float64)) : 1.0
+    escala_Φ_mma = 1.0
+    offset_Φ_mma = escala_mma ? offset_obj_mma : 0.0
+    if escala_mma
+        dΦ_ini = Derivada(ne, nn, γ, connect, coord, K_ini, M_ini, C_ini, livres,
+                          freqs, pressures, fρ, fκ, dfρ, dfκ, μ,
+                          nodes_target, MP, elements_design, vA;
+                          Kd_factors=Kd_factors)
+        if raio_filtro > 0
+            dΦ_ini = Filtro(vizinhos, pesos, dΦ_ini, elements_design)
+        end
+        grad_ref_mma = max(maximum(abs.(dΦ_ini[elements_design])), eps(Float64))
+        escala_por_objetivo = 100.0 / max(abs(Φ_ini), 1.0)
+        escala_por_gradiente = alvo_grad_mma / grad_ref_mma
+        escala_Φ_mma = min(max(escala_por_objetivo, escala_por_gradiente), escala_mma_max)
+    end
     iter_global = Ref(0)                  # contador global de iterações
+    escala_mma && @printf("Escalas MMA | objetivo: %.4e | volume: %.4e | Φ0_MMA: %.4e\n",
+                          escala_Φ_mma, escala_V_mma, offset_Φ_mma)
 
     # =========================================================================
     # Callback do OBJETIVO para o NLopt.
@@ -158,7 +189,7 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                 if raio_filtro > 0
                     dΦ = Filtro(vizinhos, pesos, dΦ, elements_design)
                 end
-                grad .= dΦ[elements_design]
+                grad .= escala_Φ_mma .* dΦ[elements_design]
             end
 
             # Log + histórico
@@ -174,15 +205,15 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                         iter_global[], Φ, perim, volat)
             end
 
-            return Φ
+            return offset_Φ_mma + escala_Φ_mma * (Φ - Φ_ini)
         end
 
-        # Restrição de volume:  g(x) = Σ xᵢ Vᵢ − Vast ≤ 0  (linear)
+        # Restrição de volume escalada:  g(x) = (Σ xᵢ Vᵢ − Vast) / Vast ≤ 0.
         function restricao_volume!(x::Vector, grad::Vector)
             if length(grad) > 0
-                grad .= Vd
+                grad .= Vd ./ escala_V_mma
             end
-            return sum(x .* Vd) - Vast
+            return (sum(x .* Vd) - Vast) / escala_V_mma
         end
 
         return objetivo_mma!, restricao_volume!
@@ -224,7 +255,8 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
         # Otimiza este estágio (warm-start a partir do x corrente)
         (minf, xopt, ret) = NLopt.optimize(opt, x)
         x = xopt
-        println("  -> p=$(p_atual): Φ = $(minf)  (status: $(ret))")
+        Φ_estagio = escala_mma ? Φ_ini + (minf - offset_Φ_mma) / escala_Φ_mma : minf
+        println("  -> p=$(p_atual): Φ = $(Φ_estagio)  (status: $(ret), MMA=$(minf))")
 
         # Exporta a topologia ao fim de cada estágio
         γ[elements_design] .= x
