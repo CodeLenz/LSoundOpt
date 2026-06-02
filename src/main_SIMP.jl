@@ -197,6 +197,7 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
             perim = Perimiter(γ, neighedge, elements_design)
             volat = sum(x .* Vd)
             push!(hist.V, volat); push!(hist.SLP, Φ); push!(hist.P, perim)
+            Lgmsh_export_element_scalar(arquivo_pos, γ, "Iter $(iter_global[])")
             if restricao_volume
                 @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e)\n",
                         iter_global[], Φ, perim, volat, Vast)
