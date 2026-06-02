@@ -135,3 +135,86 @@ function Trust_Region_Loop(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_cur
 
     return γ_final, cv, step_accepted
 end
+
+function Trust_Region_Loop_SIMP(c, A_glob, b_glob, γ_curr, elems_design, cv, obj_curr,
+                                Past, neighedge, fem_data, MP; tol_step=1e-8)
+
+    nn, ne, coord, connect, fρ, fκ, μ, freqs, livres, vels, press, nodes_target, vA = fem_data
+    nvp = length(elems_design)
+    γ_design = γ_curr[elems_design]
+
+    beta = 100.0 * maximum(abs.(c)) + 10.0
+    c_aug = vcat(c, fill(beta, nvp))
+
+    cv_min = 1e-4
+    γ_final = copy(γ_curr)
+    step_accepted = false
+    n_reject = 0
+
+    while !step_accepted
+        move_limit = max(cv_min, cv)
+
+        Δx_aug = LP_Continuo(c_aug, A_glob, b_glob, γ_design, move_limit)
+        Δγ = Δx_aug[1:nvp]
+
+        if maximum(abs.(Δγ)) < tol_step
+            println("    -> Passo nulo do SLP contínuo. Próxima iteração.")
+            step_accepted = true
+            break
+        end
+
+        pred_red = -sum(c .* Δγ)
+        if pred_red <= 1e-12
+            println("    -> Redução prevista não positiva/desprezível. Reduzindo cv.")
+            cv = max(cv_min, 0.5 * cv)
+            n_reject += 1
+            if n_reject >= 10
+                step_accepted = true
+            end
+            continue
+        end
+
+        γ_trial = copy(γ_curr)
+        γ_trial[elems_design] .= clamp.(γ_design .+ Δγ, 0.0, 1.0)
+
+        P_trial = Perimiter(γ_trial, neighedge, elems_design)
+        if (Past > 0) && (P_trial > (Past + 1e-4))
+            println("    -> REJEITADO (Geometria). P=$P_trial. Reduzindo cv.")
+            cv = max(cv_min, 0.5 * cv)
+            n_reject += 1
+            if n_reject >= 10
+                step_accepted = true
+            end
+            continue
+        end
+
+        Sweep!(nn, ne, coord, connect, γ_trial, fρ, fκ, μ, freqs, livres, vels, press, MP)
+        obj_trial = Objetivo(MP, nodes_target, vA)
+        act_red = obj_curr - obj_trial
+        R = act_red / pred_red
+
+        println("--- TR-SLP: Pred=$(round(pred_red,digits=4)) Act=$(round(act_red,digits=4)) R=$(round(R,digits=2)) cv=$(round(cv,digits=4))")
+
+        if R <= 0.0
+            cv = max(cv_min, 0.5 * cv)
+            n_reject += 1
+        else
+            γ_final .= γ_trial
+            step_accepted = true
+
+            if R > 0.7
+                cv = min(0.5, 1.2 * cv)
+            elseif R < 0.3
+                cv = max(cv_min, 0.5 * cv)
+            end
+        end
+
+        if n_reject >= 10
+            println("Trust Region SLP exausta (10 rejeições). Mantendo atual.")
+            step_accepted = true
+            break
+        end
+    end
+
+    return γ_final, cv, step_accepted
+end

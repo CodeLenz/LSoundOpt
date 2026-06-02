@@ -7,7 +7,8 @@
               perturbacao_inicial=0.05,
               alvo_grad_mma=1.0,
               escala_mma_max=1.0e8,
-              offset_obj_mma=50.0)
+              offset_obj_mma=50.0,
+              algoritmo=:SLP)
 
 Versão SIMP (contínua, via MMA/NLopt) do otimizador acústico reativo.
 
@@ -39,7 +40,8 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                    perturbacao_inicial=0.05,
                    alvo_grad_mma=1.0,
                    escala_mma_max=1.0e8,
-                   offset_obj_mma=50.0)
+                   offset_obj_mma=50.0,
+                   algoritmo=:SLP)
 
     # --- SETUP INICIAL (idêntico a Otim_ISLP) ---
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
@@ -57,6 +59,10 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     # Elementos de projeto
     elements_design = setdiff(1:ne, sort!(elements_fixed))
     nvp = length(elements_design)
+    map_global_local = Dict{Int, Int}()
+    for (i, ele) in enumerate(elements_design)
+        map_global_local[ele] = i
+    end
 
     # Leitura do YAML (raio, niter, vf, perímetro, μ, fatorcv)
     # OBS: fatorcv e o perímetro-limite não são usados no SIMP; mantidos
@@ -81,9 +87,9 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     # propõe passos minúsculos. A perturbação quebra a simetria e dá ao
     # MMA uma direção de descida não-trivial já na primeira avaliação.
     # (Mantida pequena para não enviesar a topologia final.)
-    println("Inicializando topologia (SIMP, γ0 = vf + perturbação)...")
+    println("Inicializando topologia (SIMP, γ0 = 0")#vf + perturbação)...")
     γ = zeros(ne)
-    γ[elements_design] .= vf .+ perturbacao_inicial .* (rand(nvp) .- 0.5)
+    #γ[elements_design] .= vf .+ perturbacao_inicial .* (rand(nvp) .- 0.5)
     clamp!(γ, 0.0, 1.0)
     Fix_γ!(γ, elements_fixed, values_fixed)
     writedlm(arquivo_γ_ini, γ)
@@ -136,6 +142,97 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
 
     # Históricos
     hist = (V = Float64[], SLP = Float64[], P = Float64[])
+
+    if algoritmo == :SLP
+        println("\n========== Otimização SIMP via SLP contínuo ==========")
+        cv_current = fatorcv
+        iter_global = 0
+
+        p_atual = p_inicial
+        while p_atual <= p_final + 1e-9
+
+            println("\n========== Estágio SIMP-SLP: p = $(p_atual) ==========")
+
+            par = Cria_Param_SIMP(p_atual)
+            fρ, fκ, dfρ, dfκ = par.fρ, par.fκ, par.dfρ, par.dfκ
+
+            for iter = 1:niter
+                iter_global += 1
+
+                volume_atual = sum(γ[elements_design] .* V[elements_design])
+
+                K, M, C = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ,
+                                 freqs, livres, velocities, pressures, MP,
+                                 Kd_factors)
+
+                Φ = Objetivo(MP, nodes_target, vA)
+                perim = Perimiter(γ, neighedge, elements_design)
+
+                push!(hist.V, volume_atual)
+                push!(hist.SLP, Φ)
+                push!(hist.P, perim)
+                Lgmsh_export_element_scalar(arquivo_pos, γ, "Iter $(iter_global)")
+
+                if restricao_volume
+                    @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e) | cv: %.4f\n",
+                            iter_global, Φ, perim, volume_atual, Vast, cv_current)
+                else
+                    @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (sem restr.) | cv: %.4f\n",
+                            iter_global, Φ, perim, volume_atual, cv_current)
+                end
+
+                dΦ = Derivada(ne, nn, γ, connect, coord, K, M, C, livres,
+                              freqs, pressures, fρ, fκ, dfρ, dfκ, μ,
+                              nodes_target, MP, elements_design, vA;
+                              Kd_factors=Kd_factors)
+                if raio_filtro > 0
+                    dΦ = Filtro(vizinhos, pesos, dΦ, elements_design)
+                end
+                c = dΦ[elements_design]
+
+                A_global, b_global = Lineariza_Restricoes(V, elements_design, Vast,
+                                                           volume_atual, perim, Past,
+                                                           ne, γ, neighedge,
+                                                           map_global_local;
+                                                           restricao_volume=restricao_volume)
+
+                fem_data = (nn, ne, coord, connect, fρ, fκ, μ, freqs, livres,
+                            velocities, pressures, nodes_target, vA)
+
+                γ_new, cv_current, step_accepted = Trust_Region_Loop_SIMP(
+                    c, A_global, b_global, γ, elements_design, cv_current, Φ,
+                    Past, neighedge, fem_data, MP)
+
+                if !step_accepted
+                    println("Trust Region SLP falhou. Terminando.")
+                    break
+                end
+
+                if maximum(abs.(γ_new[elements_design] .- γ[elements_design])) < 1e-8
+                    println("    -> SLP sem mudança efetiva. Encerrando estágio p=$(p_atual).")
+                    break
+                end
+
+                γ .= γ_new
+            end
+
+            Lgmsh_export_element_scalar(arquivo_pos, γ, "p = $(p_atual)")
+            p_atual += p_passo
+        end
+
+        println("\nFinalizando...")
+        writedlm(arquivo_γ_fin, γ)
+        Salva_Historico(arquivo_data_opt, hist, raio_filtro)
+
+        Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP)
+        for i = 1:nf
+            Lgmsh_export_nodal_scalar(arquivo_pos_freq, abs.(MP[:, i]), "Pressure $(freqs[i]) Hz - Opt")
+        end
+
+        return hist.V, hist.SLP, hist.P
+    elseif algoritmo != :MMA
+        error("Otim_SIMP:: algoritmo deve ser :SLP ou :MMA")
+    end
 
     # Vetor de design reduzido (só elementos de projeto) — espaço do MMA
     x = γ[elements_design]

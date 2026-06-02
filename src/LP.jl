@@ -91,6 +91,48 @@ function LP(c, A, b, γ_design)
 
 end
 
+function LP_Continuo(c, A, b, γ_design, move_limit)
+
+    n_design = length(γ_design)
+    n_total = length(c)
+    n_slack = n_total - n_design
+
+    model = Model(optimizer_with_attributes(HiGHS.Optimizer,
+                  "output_flag" => false,
+                  "presolve" => "on",
+                  "time_limit" => 60.0))
+
+    @variable(model, x[1:n_total])
+
+    for i = 1:n_design
+        lb = max(-move_limit, -γ_design[i])
+        ub = min( move_limit, 1.0 - γ_design[i])
+        set_lower_bound(x[i], lb)
+        set_upper_bound(x[i], ub)
+    end
+
+    if n_slack > 0
+        for i = (n_design + 1):n_total
+            set_lower_bound(x[i], 0.0)
+        end
+    end
+
+    @constraint(model, A * x .<= b)
+    @objective(model, Min, c' * x)
+    JuMP.optimize!(model)
+
+    status = termination_status(model)
+    if status == MOI.OPTIMAL
+        return value.(x)
+    elseif status == MOI.INFEASIBLE
+        println("LP_Continuo: Problema infactível.")
+        return zeros(n_total)
+    else
+        println("LP_Continuo: Status de término não ideal: $status")
+        return has_values(model) ? value.(x) : zeros(n_total)
+    end
+end
+
 #
 # n => número de variáveis de projeto
 #
