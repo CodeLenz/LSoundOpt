@@ -8,7 +8,12 @@
               alvo_grad_mma=1.0,
               escala_mma_max=1.0e8,
               offset_obj_mma=50.0,
-              algoritmo=:SLP)
+              algoritmo=:SLP,
+              delta_inicial=0.1,
+              delta_min=0.01,
+              delta_max=0.2,
+              fator_contracao=0.7,
+              fator_expansao=1.2)
 
 Versão SIMP (contínua, via MMA/NLopt) do otimizador acústico reativo.
 
@@ -41,7 +46,12 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                    alvo_grad_mma=1.0,
                    escala_mma_max=1.0e8,
                    offset_obj_mma=50.0,
-                   algoritmo=:SLP)
+                   algoritmo=:SLP,
+                   delta_inicial=0.1,
+                   delta_min=0.01,
+                   delta_max=0.2,
+                   fator_contracao=0.7,
+                   fator_expansao=1.2)
 
     # --- SETUP INICIAL (idêntico a Otim_ISLP) ---
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
@@ -87,7 +97,7 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     # propõe passos minúsculos. A perturbação quebra a simetria e dá ao
     # MMA uma direção de descida não-trivial já na primeira avaliação.
     # (Mantida pequena para não enviesar a topologia final.)
-    println("Inicializando topologia (SIMP, γ0 = 0")#vf + perturbação)...")
+    println("Inicializando topologia (SIMP, γ0 = 0)")#vf + perturbação)...")
     γ = zeros(ne)
     #γ[elements_design] .= vf .+ perturbacao_inicial .* (rand(nvp) .- 0.5)
     clamp!(γ, 0.0, 1.0)
@@ -145,8 +155,15 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
 
     if algoritmo == :SLP
         println("\n========== Otimização SIMP via SLP contínuo ==========")
-        cv_current = fatorcv
         iter_global = 0
+        γ_hist0 = γ[elements_design]
+        γ_hist1 = copy(γ_hist0)
+        γ_hist2 = copy(γ_hist0)
+        Δ1 = zeros(nvp)
+        Δ2 = zeros(nvp)
+        δ = fill(delta_inicial, nvp)
+        γ_inf = zeros(nvp)
+        γ_sup = ones(nvp)
 
         p_atual = p_inicial
         while p_atual <= p_final + 1e-9
@@ -174,11 +191,11 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                 Lgmsh_export_element_scalar(arquivo_pos, γ, "Iter $(iter_global)")
 
                 if restricao_volume
-                    @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e) | cv: %.4f\n",
-                            iter_global, Φ, perim, volume_atual, Vast, cv_current)
+                    @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e)\n",
+                            iter_global, Φ, perim, volume_atual, Vast)
                 else
-                    @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (sem restr.) | cv: %.4f\n",
-                            iter_global, Φ, perim, volume_atual, cv_current)
+                    @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (sem restr.)\n",
+                            iter_global, Φ, perim, volume_atual)
                 end
 
                 dΦ = Derivada(ne, nn, γ, connect, coord, K, M, C, livres,
@@ -190,30 +207,49 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                 end
                 c = dΦ[elements_design]
 
+                γ_design = γ[elements_design]
+                if iter_global > 2
+                    for i in eachindex(γ_design)
+                        if Δ1[i] * Δ2[i] < 0.0
+                            δ[i] = max(fator_contracao * δ[i], delta_min)
+                        else
+                            δ[i] = min(fator_expansao * δ[i], delta_max)
+                        end
+                    end
+                end
+
+                for i in eachindex(γ_design)
+                    if γ_design[i] > 0.0
+                        γ_inf[i] = max((1.0 - δ[i]) * γ_design[i], 0.0)
+                        γ_sup[i] = min((1.0 + δ[i]) * γ_design[i], 1.0)
+                    else
+                        γ_inf[i] = 0.0
+                        γ_sup[i] = min(δ[i], 1.0)
+                    end
+                end
+
                 A_global, b_global = Lineariza_Restricoes(V, elements_design, Vast,
                                                            volume_atual, perim, Past,
                                                            ne, γ, neighedge,
                                                            map_global_local;
                                                            restricao_volume=restricao_volume)
 
-                fem_data = (nn, ne, coord, connect, fρ, fκ, μ, freqs, livres,
-                            velocities, pressures, nodes_target, vA)
+                beta = 100.0 * maximum(abs.(c)) + 10.0
+                c_aug = vcat(c, fill(beta, nvp))
+                Δx_aug = LP_Continuo(c_aug, A_global, b_global, γ_design, γ_inf, γ_sup)
+                Δγ = Δx_aug[1:nvp]
 
-                γ_new, cv_current, step_accepted = Trust_Region_Loop_SIMP(
-                    c, A_global, b_global, γ, elements_design, cv_current, Φ,
-                    Past, neighedge, fem_data, MP)
-
-                if !step_accepted
-                    println("Trust Region SLP falhou. Terminando.")
-                    break
-                end
-
-                if maximum(abs.(γ_new[elements_design] .- γ[elements_design])) < 1e-8
+                if maximum(abs.(Δγ)) < 1e-8
                     println("    -> SLP sem mudança efetiva. Encerrando estágio p=$(p_atual).")
                     break
                 end
 
-                γ .= γ_new
+                γ[elements_design] .= clamp.(γ_design .+ Δγ, 0.0, 1.0)
+                γ_hist2 .= γ_hist1
+                γ_hist1 .= γ_hist0
+                γ_hist0 .= γ[elements_design]
+                Δ1 .= γ_hist0 .- γ_hist1
+                Δ2 .= γ_hist1 .- γ_hist2
             end
 
             Lgmsh_export_element_scalar(arquivo_pos, γ, "p = $(p_atual)")

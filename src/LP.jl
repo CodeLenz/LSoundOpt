@@ -91,7 +91,7 @@ function LP(c, A, b, γ_design)
 
 end
 
-function LP_Continuo(c, A, b, γ_design, move_limit)
+function LP_Continuo(c, A, b, γ_design, γ_inf=nothing, γ_sup=nothing)
 
     n_design = length(γ_design)
     n_total = length(c)
@@ -105,8 +105,10 @@ function LP_Continuo(c, A, b, γ_design, move_limit)
     @variable(model, x[1:n_total])
 
     for i = 1:n_design
-        lb = max(-move_limit, -γ_design[i])
-        ub = min( move_limit, 1.0 - γ_design[i])
+        γi = γ_inf === nothing ? 0.0 : γ_inf[i]
+        γs = γ_sup === nothing ? 1.0 : γ_sup[i]
+        lb = max(γi - γ_design[i], -γ_design[i])
+        ub = min(γs - γ_design[i], 1.0 - γ_design[i])
         set_lower_bound(x[i], lb)
         set_upper_bound(x[i], ub)
     end
