@@ -12,8 +12,6 @@ module LSoundOpt
    using Lgmsh
    using Gmsh
    using DelimitedFiles
-   using Printf
-
    # ProgressMeter
    using ProgressMeter
 

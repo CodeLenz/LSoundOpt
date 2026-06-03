@@ -27,7 +27,9 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     nvp = length(elements_design) 
 
     # Leitura do YAML
-    raio_filtro, niter, vf, Past, μ, fatorcv = Le_YAML(replace(mshfile,".msh"=>".yaml"))
+    arquivo_yaml = replace(mshfile, ".msh" => ".yaml")
+    raio_filtro, niter, vf, Past, μ, fatorcv = Le_YAML(arquivo_yaml)
+    alg = Le_YAML_Algoritmo(arquivo_yaml)
     
     # Mapeamento Global -> Local (Necessário para montar A_topo corretamente na linearização das restrições)
     map_global_local = Dict{Int, Int}()
@@ -83,7 +85,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
        dΦ = Derivada(ne,nn,γ,connect,coord,K,M,C,livres,freqs,pressures,fρ, fκ,dfρ,dfκ,μ, nodes_target,MP,elements_design,vA; Kd_factors=Kd_factors) 
 
        # Calcula as derivadas numéricas
-       dnum = Verifica_derivada(γ,nn,ne,coord,connect,fρ,fκ,μ,freqs,livres,velocities,pressures,nodes_target,elements_design,vA)
+       dnum = Roda_derivada_DFC(γ,nn,ne,coord,connect,fρ,fκ,μ,freqs,livres,velocities,pressures,nodes_target,elements_design,vA)
 
        # Erro relativo
        rel = (dΦ.-dnum)./(dnum.+1E-12)
@@ -94,7 +96,9 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
        Lgmsh_export_element_scalar(arquivo_pos,dnum,"Numerica")
        Lgmsh_export_element_scalar(arquivo_pos,rel,"relativa")
        
+       #
        # Verificação derivada perímetro
+       #
 
        # Função para usar nas DF
        FPerimiter(γ) =  Perimiter(γ, neighedge, elements_design)
@@ -136,7 +140,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         γ_start = copy(γ)
 
         # Atualiza Heurísticas (Warmup / Stagnation)
-        cv_current = Update_Heuristics(iter, stagnation_counter, cv_current, nvp, fatorcv)
+        cv_current = Update_Heuristics(iter, stagnation_counter, cv_current, nvp, fatorcv, alg)
 
         # Volume atual do projeto
         volume_atual = sum(γ[elements_design] .* V[elements_design])
@@ -145,7 +149,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         K, M, C = Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP, Kd_factors)
 
         # Objetivo e perímetro 
-        objetivo = Objetivo(MP, nodes_target, vA)
+        objetivo  = Objetivo(MP, nodes_target, vA)
         perimetro = Perimiter(γ, neighedge, elements_design)
 
         # Armazena histórico
@@ -160,11 +164,9 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
 
         # Mostra um resumo na tela, para acompanhamento
         if restricao_volume
-            @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (T: %.4e) | cv: %.4f\n", 
-                    iter, objetivo, perimetro, volume_atual, Vast, cv_current)
+            println("Iter $iter | SPL: $(round(objetivo, digits=4)) | Perim: $(round(perimetro, digits=4)) | Vol: $(round(volume_atual, digits=4)) (T: $(round(Vast, digits=4))) | cv: $(round(cv_current, digits=4))")
         else
-            @printf("Iter %3d | SPL: %.4f | Perim: %.4f | Vol: %.4e (sem restr.) | cv: %.4f\n", 
-                    iter, objetivo, perimetro, volume_atual, cv_current)
+            println("Iter $iter | SPL: $(round(objetivo, digits=4)) | Perim: $(round(perimetro, digits=4)) | Vol: $(round(volume_atual, digits=4)) (sem restr.) | cv: $(round(cv_current, digits=4))")
         end
 
         # Calcula a derivada do objetivo
@@ -193,7 +195,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         fem_data = (nn, ne, coord, connect, fρ, fκ, μ, freqs, livres, velocities, pressures, nodes_target, vA)
         
         # Trust Region Loop (Otimização do Passo) - Passando o solution_cache
-        γ_new, cv_current, step_accepted = Trust_Region_Loop(c, A_global, b_global, γ, elements_design, cv_current, objetivo, Past, neighedge, fem_data, solution_cache, MP)
+        γ_new, cv_current, step_accepted = Trust_Region_Loop(c, A_global, b_global, γ, elements_design, cv_current, objetivo, Past, neighedge, fem_data, solution_cache, MP, alg)
 
         # Verificação do passo
         if !step_accepted
@@ -213,9 +215,9 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
             # Incrementa o contador de stagnação
             stagnation_counter += 1
 
-            println("--- AVISO: Estagnação detectada ($stagnation_counter/4).")
+            println("--- AVISO: Estagnação detectada ($stagnation_counter/$(alg.hard_stop_stagnation)).")
 
-            if stagnation_counter >= 4
+            if stagnation_counter >= alg.hard_stop_stagnation
                println("HARD STOP.")
                break
             end
