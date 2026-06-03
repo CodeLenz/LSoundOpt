@@ -39,7 +39,7 @@ function Processa_FRF(meshfile::String,freqs::Vector)
     isfile(arquivo_yaml) || error("Otim:: arquivo de entrada $(arquivo_yaml) não existe")
 
     # Le dados da malha
-    nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed = LSound.Parsemsh_Daniele(meshfile)
+    nn, coord, ne, connect, materials, nodes_open, velocities, nodes_pressure, pressures, damping, nodes_probe, nodes_target, elements_fixed, values_fixed, centroides = LSound.Parsemsh_Daniele(meshfile)
     
     # Le os dados do arquivo yaml
     raio_filtro, niter, vf, Past, μ, fatorcv = Le_YAML(arquivo_yaml)

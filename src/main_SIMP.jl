@@ -9,6 +9,9 @@
               escala_mma_max=1.0e8,
               offset_obj_mma=50.0,
               algoritmo=:SLP,
+              gamma0_simp=1.0e-3,
+              beta_slack_factor=20.0,
+              beta_slack_offset=1.0,
               delta_inicial=0.1,
               delta_min=0.01,
               delta_max=0.2,
@@ -47,11 +50,18 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                    escala_mma_max=1.0e8,
                    offset_obj_mma=50.0,
                    algoritmo=:SLP,
+                   gamma0_simp=1.0e-3,
+                   beta_slack_factor=20.0,
+                   beta_slack_offset=1.0,
                    delta_inicial=0.1,
                    delta_min=0.01,
                    delta_max=0.2,
                    fator_contracao=0.7,
                    fator_expansao=1.2)
+
+    0.0 <= gamma0_simp <= 1.0 || error("Otim_SIMP:: gamma0_simp deve estar em [0,1]")
+    beta_slack_factor >= 0.0 || error("Otim_SIMP:: beta_slack_factor deve ser >= 0")
+    beta_slack_offset >= 0.0 || error("Otim_SIMP:: beta_slack_offset deve ser >= 0")
 
     # --- SETUP INICIAL (idêntico a Otim_ISLP) ---
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
@@ -90,16 +100,11 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
     par = Cria_Param_SIMP(p_inicial)
     fρ, fκ, dfρ, dfκ = par.fρ, par.fκ, par.dfρ, par.dfκ
 
-    # Variáveis de projeto iniciais.
-    # SIMP precisa de ponto interior viável. Começamos uniforme em vf,
-    # mas com uma pequena perturbação aleatória: com p alto e γ0 uniforme,
-    # a simetria deixa o gradiente quase degenerado no arranque e o MMA
-    # propõe passos minúsculos. A perturbação quebra a simetria e dá ao
-    # MMA uma direção de descida não-trivial já na primeira avaliação.
-    # (Mantida pequena para não enviesar a topologia final.)
-    println("Inicializando topologia (SIMP, γ0 = 0)")#vf + perturbação)...")
+    # Variáveis de projeto iniciais: quase ar, determinístico, para manter
+    # comparabilidade com a formulação binária que começa em γ = 0.
+    println("Inicializando topologia (SIMP, γ0 = $(gamma0_simp))")
     γ = zeros(ne)
-    #γ[elements_design] .= vf .+ perturbacao_inicial .* (rand(nvp) .- 0.5)
+    γ[elements_design] .= gamma0_simp
     clamp!(γ, 0.0, 1.0)
     Fix_γ!(γ, elements_fixed, values_fixed)
     writedlm(arquivo_γ_ini, γ)
@@ -219,13 +224,8 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                 end
 
                 for i in eachindex(γ_design)
-                    if γ_design[i] > 0.0
-                        γ_inf[i] = max((1.0 - δ[i]) * γ_design[i], 0.0)
-                        γ_sup[i] = min((1.0 + δ[i]) * γ_design[i], 1.0)
-                    else
-                        γ_inf[i] = 0.0
-                        γ_sup[i] = min(δ[i], 1.0)
-                    end
+                    γ_inf[i] = max(γ_design[i] - δ[i], 0.0)
+                    γ_sup[i] = min(γ_design[i] + δ[i], 1.0)
                 end
 
                 A_global, b_global = Lineariza_Restricoes(V, elements_design, Vast,
@@ -234,7 +234,8 @@ function Otim_SIMP(arquivo::String, freqs::Vector, vA::Vector;
                                                            map_global_local;
                                                            restricao_volume=restricao_volume)
 
-                beta = 100.0 * maximum(abs.(c)) + 10.0
+                beta = max(beta_slack_factor * maximum(abs.(c)) + beta_slack_offset,
+                           eps(Float64))
                 c_aug = vcat(c, fill(beta, nvp))
                 Δx_aug = LP_Continuo(c_aug, A_global, b_global, γ_design, γ_inf, γ_sup)
                 Δγ = Δx_aug[1:nvp]

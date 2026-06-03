@@ -19,10 +19,10 @@ raio: 0.008
 # Fator inicial de atualização para air/solid
 # fatorcv: 5E-2
 # para a faixa [350-550] precisa de uma pedalada maior
-fatorcv: 0.1
+fatorcv: 5E-2
 
 # Upper Perimiter constraint
-perimetro: 620
+perimetro: 250
 
 # Número de iterações de otimização (valor padrão é 100)
 niter: 100
