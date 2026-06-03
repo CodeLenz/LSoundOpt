@@ -1,27 +1,66 @@
 #
-# Dados para a otimização 
+# LShape optimization input
+#
+# This file is the reference YAML template for the current discrete ISLP code.
+# Keep all algorithmic parameters explicit here to make optimization runs
+# reproducible and easier to compare.
 #
 
-# Versão do arquivo (opcional)
+# File format version.
 versao: 1.0
 
-# Fração de volume (obrigatório)
+# Volume fraction target. Must be in (0, 1).
 volfrac: 0.99
 
-# Raio do filtro (obrigatório) 0.008
-# 0 para desligar o filtro
+# Spatial filter radius. Use 0.0 to disable the filter.
 raio: 0.008
 
-# Parâmetro para o amortecimento 
-# 23C, 1atm
+# Acoustic damping parameter.
+# 23 C, 1 atm: 1.83E-5
 μ: 1.83E-5
 
-# Fator inicial de atualização para air/solid
-# fatorcv: 5E-2
+# Initial air/solid update fraction.
 fatorcv: 0.15
 
-# Upper Perimiter constraint
-perimetro: 0
+# Upper perimeter constraint. Use 0.0 to disable it.
+perimetro: 0.0
 
-# Número de iterações de otimização (valor padrão é 100)
+# Number of optimization iterations.
 niter: 100
+
+# Algorithmic controls.
+algoritmo:
+
+  # Trust-region acceptance and update ratios.
+  tr_accept_ratio_min: 0.0
+  tr_expand_ratio: 0.7
+  tr_shrink_ratio: 0.3
+
+  # Trust-region cv update factors and bounds.
+  tr_expand_factor: 1.2
+  tr_shrink_factor: 0.5
+  tr_cv_max: 0.5
+
+  # Maximum number of rejected trial steps inside one trust-region loop.
+  tr_max_reject: 10
+
+  # Numerical tolerances used in geometry/physics acceptance checks.
+  tr_perimeter_tol: 1.0E-4
+  tr_physics_tol: 1.0E-9
+  tr_pred_tol: 1.0E-12
+  tr_ratio_pred_tol: 1.0E-10
+
+  # MILP slack-variable penalty:
+  # beta = slack_safety_factor * max(1, g_move) * maximum(abs.(c)) + slack_offset
+  slack_safety_factor: 2.0
+  slack_offset: 10.0
+
+  # Heuristic update controls for stagnation recovery.
+  heur_cv_max: 0.5
+  heur_stag_l1_factor: 1.0
+  heur_stag_l2_factor: 1.5
+  heur_stag_l3_factor: 3.0
+  heur_min_moves: 2.0
+
+  # Stop after this many consecutive null/stagnated iterations.
+  hard_stop_stagnation: 4

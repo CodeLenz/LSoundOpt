@@ -24,6 +24,7 @@ module LSoundOpt
    # Inclui os arquivos do pacote
 
    # Lê os dados do .yaml
+   include("parametros_algoritmo.jl")
    include("le_yaml.jl")
 
    # Parametrização do material 

@@ -33,7 +33,7 @@ function Lineariza_Restricoes(V, elements_design, Vast, volume_atual, perimetro_
         A_list = vcat(A_list, A_per_ext)
     end
 
-    # 3. Restrições Topológicas Locais (No-Island / No-Hole)
+    # Restrições Topológicas Locais (No-Island / No-Hole)
     I_topo = Int[]
     J_topo = Int[]
     V_topo = Float64[]
