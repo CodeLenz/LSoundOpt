@@ -15,6 +15,7 @@ raio: 0.008
 # Parâmetro para o amortecimento 
 # 23C, 1atm
 μ: 1.83E-5
+#μ: 1.83E-3
 
 # Fator inicial de atualização para air/solid
 # fatorcv: 5E-2
