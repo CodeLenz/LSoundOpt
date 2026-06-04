@@ -72,6 +72,12 @@ function Avalia_Solucao(meshfile::String, freqs::Vector, datfile::String; vA=Flo
     # Volume atual do projeto
     volume = sum(gamma[elements_design] .* V[elements_design])
 
+    # Volume total do domínio de projeto
+    volume_total_projeto = sum(V[elements_design])
+
+    # Fração de volume ocupada no domínio de projeto
+    fracao_volume = volume / volume_total_projeto
+
     # Perímetro atual do projeto
     neighedge = NeighborEdges(ne, connect, elements_design)
     perimetro = Perimiter(gamma, neighedge, elements_design)
@@ -82,6 +88,8 @@ function Avalia_Solucao(meshfile::String, freqs::Vector, datfile::String; vA=Flo
         SLP = slp,
         SPL_por_frequencia = spl_por_frequencia,
         volume = volume,
+        volume_total_projeto = volume_total_projeto,
+        fracao_volume = fracao_volume,
         perimetro = perimetro,
         gamma = gamma,
     )
