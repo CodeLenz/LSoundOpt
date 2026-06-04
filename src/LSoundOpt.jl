@@ -68,6 +68,9 @@ module LSoundOpt
    # Processa a FRF da solução 
    include("processa_FRF.jl")
 
+   # Avalia uma solucao carregada de arquivo .dat
+   include("avalia_solucao.jl")
+
    # Gerencia arquivos de saída
    include("arquivos.jl")
 
@@ -85,5 +88,6 @@ module LSoundOpt
 
    # Exporta a rotina principal 
    export Otim_ISLP
+   export Avalia_Solucao
 
 end
