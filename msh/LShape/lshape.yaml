@@ -20,7 +20,7 @@ raio: 0.008
 μ: 1.83E-5
 
 # Initial air/solid update fraction.
-fatorcv: 0.15
+fatorcv: 0.2
 
 # Upper perimeter constraint. Use 0.0 to disable it.
 perimetro: 0.0
@@ -51,8 +51,8 @@ algoritmo:
   tr_ratio_pred_tol: 1.0E-10
 
   # MILP slack-variable penalty:
-  # beta = slack_safety_factor * max(1, g_move) * maximum(abs.(c)) + slack_offset
-  slack_safety_factor: 2.0
+  # beta = slack_safety_factor * maximum(abs.(c)) + slack_offset
+  slack_safety_factor: 100.0
   slack_offset: 10.0
 
   # Heuristic update controls for stagnation recovery.

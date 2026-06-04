@@ -22,7 +22,7 @@ Base.@kwdef struct Algorithm_Params
     tr_ratio_pred_tol::Float64 = 1.0e-10
 
     # Penalização das folgas do MILP
-    slack_safety_factor::Float64 = 2.0
+    slack_safety_factor::Float64 = 100.0
     slack_offset::Float64 = 10.0
 
     # Heurísticas de atualização do cv
@@ -88,7 +88,7 @@ function Le_YAML_Algoritmo(arquivo::AbstractString)
         tr_physics_tol = _yaml_value(alg, "tr_physics_tol", 1.0e-9),
         tr_pred_tol = _yaml_value(alg, "tr_pred_tol", 1.0e-12),
         tr_ratio_pred_tol = _yaml_value(alg, "tr_ratio_pred_tol", 1.0e-10),
-        slack_safety_factor = _yaml_value(alg, "slack_safety_factor", 2.0),
+        slack_safety_factor = _yaml_value(alg, "slack_safety_factor", 100.0),
         slack_offset = _yaml_value(alg, "slack_offset", 10.0),
         heur_cv_max = _yaml_value(alg, "heur_cv_max", 0.5),
         heur_stag_l1_factor = _yaml_value(alg, "heur_stag_l1_factor", 1.0),

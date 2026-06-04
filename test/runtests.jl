@@ -163,13 +163,14 @@ end
     @test constrained_delta == [0.0, -1.0]
 end
 
-@testset "Slack penalty scaling" begin
+@testset "Slack penalty formula" begin
     c = [-3.0, 2.0, -1.0]
     beta_small = LSoundOpt.Slack_Penalty(c, 1)
     beta_large = LSoundOpt.Slack_Penalty(c, 20)
 
-    @test beta_large > beta_small
-    @test beta_large > 2 * 20 * maximum(abs.(c))
+    @test beta_large == beta_small
+    @test beta_small == 100.0 * maximum(abs.(c)) + 10.0
+    @test LSoundOpt.Slack_Penalty(c, 20; safety_factor=5.0, offset=1.0) == 16.0
     @test LSoundOpt.Slack_Penalty(Float64[], 20) == 10.0
 end
 

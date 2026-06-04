@@ -1,16 +1,16 @@
 #
 # Penalização das variáveis de folga usadas no MILP.
 #
-# A penalização cresce com o número de trocas permitidas em uma iteração.
-# Assim, uma folga não fica barata quando a trust-region é grande.
+# Fórmula original: a penalização é proporcional ao maior ganho linear
+# possível em uma troca, independentemente do tamanho da trust-region.
 #
-function Slack_Penalty(c, g_move; safety_factor=2.0, offset=10.0)
+function Slack_Penalty(c, _g_move; safety_factor=100.0, offset=10.0)
 
     # Maior ganho linear associado a uma troca de material
     max_c = isempty(c) ? 0.0 : maximum(abs.(c))
 
     # Penalização da folga
-    return safety_factor * max(1, g_move) * max_c + offset
+    return safety_factor * max_c + offset
 
 end
 

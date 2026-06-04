@@ -7,7 +7,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
 
     # SETUP INICIAL
     mshfile, arquivos_saida = Setup_Arquivos(arquivo)
-    arquivo_pos, arquivo_pos_freq, arquivo_data_opt, arquivo_γ_ini, arquivo_γ_fin = arquivos_saida
+    arquivo_pos, arquivo_pos_freq, arquivo_data_opt, arquivo_γ_ini, arquivo_γ_fin, arquivo_runinfo = arquivos_saida
 
     # Inicializa vetor de pesos para o SPL (sensibilidade em relação à frequência)
     if isempty(vA)
@@ -124,7 +124,14 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     restricao_volume || println("Rodando ISLP sem restrição de volume; o volume será apenas monitorado.")
 
     # Históricos
-    hist = (V = Float64[], SLP = Float64[], P = Float64[])
+    hist = (
+        V = Float64[],
+        SLP = Float64[],
+        P = Float64[],
+        cv = Float64[],
+        moves = Int[],
+        stagnation = Int[],
+    )
     
     # Parâmetros de Controle
     cv_current = fatorcv 
@@ -133,8 +140,13 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     # Inicializa o cache de soluções (Hash -> SPL) para evitar recálculos do FEM
     solution_cache = Dict{UInt64, Float64}()
 
+    # Estado final da execução, usado nos arquivos de referência
+    stop_reason = "niter"
+    iterations_done = 0
+
     # Loop externo 
     for iter = 1:niter
+        iterations_done = iter
         
         # Copia as variáves de projeto atuais 
         γ_start = copy(γ)
@@ -156,6 +168,8 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         push!(hist.V, volume_atual);
         push!(hist.SLP, objetivo);
         push!(hist.P, perimetro)
+        push!(hist.cv, cv_current)
+        push!(hist.stagnation, stagnation_counter)
         
         # Exporta os campos de pressão
         for i=1:nf
@@ -200,8 +214,13 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
         # Verificação do passo
         if !step_accepted
             println("Trust Region falhou. Terminando.")
+            push!(hist.moves, 0)
+            stop_reason = "trust_region_failed"
             break
         end
+
+        # Número de trocas discretas aceitas nesta iteração
+        push!(hist.moves, round(Int, sum(abs.(γ_new - γ))))
         
         # Atualiza variáveis
         γ .= γ_new
@@ -219,6 +238,7 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
 
             if stagnation_counter >= alg.hard_stop_stagnation
                println("HARD STOP.")
+               stop_reason = "hard_stop_stagnation"
                break
             end
         else
@@ -230,11 +250,58 @@ function Otim_ISLP(arquivo::String, freqs::Vector, vA::Vector; verifica_derivada
     # FINALIZAÇÃO 
     println("Finalizando...")
 
+    # Avalia explicitamente a topologia final salva.
+    volume_final = sum(γ[elements_design] .* V[elements_design])
+    Sweep!(nn, ne, coord, connect, γ, fρ, fκ, μ, freqs, livres, velocities, pressures, MP, Kd_factors)
+    objetivo_final = Objetivo(MP, nodes_target, vA)
+    perimetro_final = Perimiter(γ, neighedge, elements_design)
+    final = (
+        volume = volume_final,
+        objetivo = objetivo_final,
+        perimetro = perimetro_final,
+        cv = cv_current,
+    )
+
     # Grava a configuração otimizda
     writedlm(arquivo_γ_fin, γ)
 
     # Salva histórico da otimização 
-    Salva_Historico(arquivo_data_opt, hist, raio_filtro)
+    Salva_Historico(arquivo_data_opt, hist, raio_filtro; final=final)
+
+    # Salva metadados da rodada para reprodução futura
+    runinfo = (
+        arquivo_entrada = arquivo,
+        mshfile = mshfile,
+        arquivo_yaml = arquivo_yaml,
+        arquivo_pos = arquivo_pos,
+        arquivo_pos_freq = arquivo_pos_freq,
+        arquivo_data = arquivo_data_opt,
+        arquivo_gamma_ini = arquivo_γ_ini,
+        arquivo_gamma_fin = arquivo_γ_fin,
+        freqs = freqs,
+        vA = vA,
+        restricao_volume = restricao_volume,
+        nn = nn,
+        ne = ne,
+        nvp = nvp,
+        n_fixed = length(elements_fixed),
+        n_nodes_open = length(nodes_open),
+        n_nodes_pressure = length(nodes_pressure),
+        n_nodes_target = length(nodes_target),
+        raio_filtro = raio_filtro,
+        niter = niter,
+        vf = vf,
+        Past = Past,
+        mu = μ,
+        fatorcv = fatorcv,
+        Vast = Vast,
+        alg = alg,
+        stop_reason = stop_reason,
+        iterations_done = iterations_done,
+        hist = hist,
+        final = final,
+    )
+    Salva_RunInfo(arquivo_runinfo, runinfo)
     
     # Retorna o histórico para o terminal
     return hist.V, hist.SLP, hist.P

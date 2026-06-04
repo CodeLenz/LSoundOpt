@@ -175,7 +175,7 @@ for (vtk_type, conn) in cells
 
     celltype = vtk_map[vtk_type]
 
-    for i in axes(cpnn,1) #in 1:size(conn,1)
+    for i in axes(conn,1)
         push!(vtk_cells, MeshCell(celltype, conn[i,:]))
     end
 
